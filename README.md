@@ -111,20 +111,21 @@ The e2e suite drives a real browser through all three tool flows and records a v
 
 ```bash
 # Install Playwright + browser
+cd tests/e2e
 npm install
 npx playwright install chromium
 
-# Start the app (separate terminal)
+# Start the app (separate terminal, from repo root)
 docker compose up --build
 # — or —
 cd backend && uvicorn main:app --port 8080 &
 cd frontend && npm run dev &
 
 # Run the demo (headed, ~4 minutes)
-npm run test:e2e
+node demo.mjs
 
 # Run headless (CI-friendly)
-npm run test:e2e:headless
+LOGOS_HEADLESS=true node demo.mjs
 ```
 
 The runner exercises:
@@ -141,7 +142,7 @@ Output (video + diagnostic screenshots) is written to `tests/e2e/output/` (gitig
 ```bash
 # Full test matrix with mock mode
 MOCK_MODE=true docker compose up --build &
-npm run test:e2e:headless
+cd tests/e2e && LOGOS_HEADLESS=true node demo.mjs
 ```
 
 ## Environment Variables
