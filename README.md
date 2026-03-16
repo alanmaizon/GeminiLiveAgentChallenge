@@ -1,47 +1,63 @@
 # ΛΟΓΟΣ — Realtime Ancient Greek Scholar Console
 
-A premium, realtime multimodal AI console for Ancient Greek scholarship. Speak, type, or show images of texts and artefacts to a live AI philologist that responds with streaming text and structured spoken audio.
+[![Deploy: Cloud Run](https://img.shields.io/badge/deploy-Cloud%20Run-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/run)
+[![Backend: Python 3.11](https://img.shields.io/badge/backend-Python%203.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Frontend: Next.js 14](https://img.shields.io/badge/frontend-Next.js%2014-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Gemini Live](https://img.shields.io/badge/Gemini%20Live-2.5%20Flash-8E44AD?logo=google&logoColor=white)](https://ai.google.dev/)
+[![Tests: 82 passing](https://img.shields.io/badge/tests-82%20passing-22C55E?logo=pytest&logoColor=white)](#testing)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+
+A realtime multimodal AI console for Ancient Greek scholarship. Speak, type, or show images of manuscripts and artefacts to a live AI philologist that responds with streaming text, structured tool cards, and synthesized audio.
 
 ## Features
 
-- **Voice input** — speak to Logos and hear streaming responses
+- **Voice input** — speak to Logos and hear streaming responses via Gemini Live native audio
 - **Camera input** — show manuscripts, inscriptions, or printed Greek pages for instant analysis
-- **Philological parsing** — structured morphological analysis via function-calling tools (`parse_greek`, `lookup_lexicon`, `scan_meter`)
+- **Philological tools** — structured morphological analysis (`parse_greek`), lexicon entries (`lookup_lexicon`), and dactylic hexameter scansion (`scan_meter`) via function-calling
+- **Visual-only fields** — transliteration, IPA, and scansion patterns are rendered as UI cards, never spoken aloud
 - **Streaming transcript** — token-by-token rendering with interruption support
 - **Inspector drawer** — live event log, tool call traces, token monitor, camera preview
+- **Contextual passage mode** — pin a Greek text passage; it is injected as session context automatically
+- **Adaptive difficulty** — beginner / intermediate / advanced level selector adjusts model register
 - **Mock mode** — fully demoable without an API key
 
 ## Architecture
 
 ```
-Browser (Next.js)  ←── WebSocket ───►  FastAPI Backend (Cloud Run)
+Browser (Next.js)  ←── WebSocket ───►  FastAPI Backend  ───►  Gemini Live API
                                                │
-                                               ▼
-                                        Gemini Live API
+                                          tools.py
+                                       ┌──────┴──────┐
+                                  meter.py      gemini-2.5-flash
+                              (local, <1 ms)   (JSON, thinking off)
 ```
 
-See [architecture.md](./architecture.md) for the full diagram and architecture decision records.
+**WebSocket protocol** is the single integration contract. Every message has a `type` field — types are defined in `frontend/lib/types.ts` (TypeScript) and `backend/models.py` (Pydantic). These must stay in sync.
+
+**Tool execution split:** the full tool result goes to the frontend (for cards); a spoken-safe subset (visual-only fields stripped) goes back to the model via `send_tool_response`. This prevents transliteration, IPA, and scansion notation from being narrated.
+
+**`scan_meter` is fully local** — a deterministic dactylic hexameter scanner (`backend/meter.py`) handles nucleus extraction, long-by-position rules, backtracking, and synizesis fallback in under 1 ms with `lru_cache`. No LLM call.
+
+See [CLAUDE.md](./CLAUDE.md) for full architecture notes and key file index.
 
 ## Quick Start (Docker Compose)
 
 ```bash
-# Clone
-git clone <repo-url> && cd logos
+git clone <repo-url> && cd GeminiLiveAgentChallenge
 
 # Copy env files
 cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env.local
-
-# Optional: add your Gemini API key to backend/.env
-# Without it, MOCK_MODE=true is used automatically
+# Optional: add GEMINI_API_KEY to backend/.env — omit for mock mode
 
 docker compose up --build
 ```
 
-Frontend: http://localhost:3000
-Backend health: http://localhost:8080/health
+- Frontend: http://localhost:3000
+- Backend health: http://localhost:8080/health
 
-## Local Development (without Docker)
+## Local Development
 
 ### Backend
 
@@ -49,7 +65,7 @@ Backend health: http://localhost:8080/health
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # edit with your API key
+cp .env.example .env   # add your API key
 uvicorn main:app --reload --port 8080
 ```
 
@@ -58,9 +74,27 @@ uvicorn main:app --reload --port 8080
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local   # edit NEXT_PUBLIC_WS_URL if needed
-uvicorn main:app --reload --port 8080
+npm run dev   # http://localhost:3000
 ```
+
+## Testing
+
+```bash
+# Backend (pytest) — 66 tests
+cd backend && python -m pytest tests/ -v
+
+# Frontend (Vitest) — 16 tests
+cd frontend && npm test
+```
+
+Test suites:
+
+| Suite | File | Tests |
+|---|---|---|
+| Transcript sanitization | `backend/tests/test_sanitize.py` | 20 |
+| Spoken-safe tool split | `backend/tests/test_spoken_safe.py` | 18 |
+| Hexameter scanner | `backend/tests/test_meter.py` | 28 |
+| Frontend utils | `frontend/lib/__tests__/utils.test.ts` | 16 |
 
 ## Environment Variables
 
@@ -68,11 +102,12 @@ uvicorn main:app --reload --port 8080
 
 | Variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | — | Google AI Studio or Vertex AI key |
+| `GEMINI_API_KEY` | — | Google AI Studio key (Mode A) |
+| `GCP_PROJECT_ID` | — | GCP project for Vertex AI auth (Mode B) |
+| `GCP_REGION` | `us-central1` | Vertex AI region |
 | `GEMINI_MODEL` | `gemini-live-2.5-flash-native-audio` | Gemini Live model ID |
-| `MOCK_MODE` | `false` | Enable mock mode (auto-enabled if no API key) |
+| `MOCK_MODE` | `false` | Force mock mode (auto-enabled if no key) |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS allowed origins |
-| `GCP_PROJECT_ID` | — | Google Cloud project (for Cloud Run) |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -85,27 +120,34 @@ uvicorn main:app --reload --port 8080
 
 ```bash
 export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=us-central1
 export GEMINI_API_KEY=your-api-key
 
-# Deploy backend
+# 1. Deploy backend
 bash deploy/cloud-run-backend.sh
 
-# Deploy frontend (set BACKEND_URL from the step above)
+# 2. Deploy frontend — paste the URL printed by step 1
 export BACKEND_URL=https://logos-backend-xxx-uc.a.run.app
 bash deploy/cloud-run-frontend.sh
 ```
 
+Both services are deployed as unauthenticated Cloud Run services. The backend CORS policy is controlled by `ALLOWED_ORIGINS`.
+
 ## Implemented Features
 
-- ✅ Feature A — Philological Parse Mode (`parse_greek` tool + ParseCard UI)
-- ✅ Feature B — Visual Text Recognition (camera capture → Gemini multimodal)
-- ✅ Feature C — Pronunciation guidance (IPA in parse results and responses)
-- ✅ Feature D — Contextual Passage Mode (pinned passage card above transcript, passage sent as context on session start)
-- ✅ Feature E — Adaptive Difficulty (3-level selector in WelcomeView, level badge in TopBar, appended to system instruction)
+- ✅ **Feature A** — Philological Parse Mode (`parse_greek` tool + ParseCard)
+- ✅ **Feature B** — Visual Text Recognition (camera → Gemini multimodal)
+- ✅ **Feature C** — Pronunciation guidance (IPA in parse cards, never spoken)
+- ✅ **Feature D** — Contextual Passage Mode (pinned passage injected at session start)
+- ✅ **Feature E** — Adaptive Difficulty (3-level selector, appended to system instruction)
 
 ## Tech Stack
 
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Lucide React
-- **Backend:** Python FastAPI, websockets, google-genai SDK
-- **AI:** Gemini Live API (gemini-live-2.5-flash-native-audio)
-- **Deploy:** Google Cloud Run (backend + frontend)
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 14 (App Router), TypeScript, Tailwind CSS, Lucide React |
+| Backend | Python 3.11, FastAPI 0.115, uvicorn |
+| AI | Gemini Live API (`gemini-live-2.5-flash-native-audio`), google-genai ≥ 1.67 |
+| Meter analysis | Custom deterministic hexameter scanner (`meter.py`), `lru_cache` |
+| Testing | pytest ≥ 8, Vitest 1.6 |
+| Deploy | Google Cloud Run (backend + frontend), Cloud Build |
