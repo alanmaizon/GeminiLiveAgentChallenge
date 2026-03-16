@@ -1,0 +1,63 @@
+This is Logos — a realtime Ancient Greek scholarly console built with Gemini Live.
+
+We open on the welcome screen. Before starting a session, a passage has been pinned
+for close reading. The text is Pindar's Pythian Eight — skias onar anthropos —
+man is a dream of a shadow. This is the close-reading feature: a passage pinned at
+the top stays visible above the conversation for the entire session.
+
+The difficulty is set to Beginner. We start the first session.
+
+The first demonstration is structured morphology. I type: "Parse anthropos for me" —
+asking Logos to analyze the word that appears in the pinned passage above.
+
+The response streams in live. As Logos speaks, it invokes parse underscore greek —
+a declared tool that returns the lemma, part of speech, grammatical case, gender,
+number, and definition. The result renders as a card directly in the transcript.
+
+The word is anthropos — second declension, masculine, nominative singular.
+Lemma: anthropos. Meaning: human being, person. The token count increments in the
+corner of the inspector panel in real time.
+
+The inspector drawer is open on the right. It shows the raw tool dot call event:
+the function name and the arguments passed to it. Then the tool dot result flowing
+back through the WebSocket. This is not interpretation. It is a structured output
+from a declared tool, visible in full.
+
+The session ends. The passage is cleared from the transcript. The difficulty badge
+transitions from Beginner to Intermediate.
+
+In the second segment, Logos is shown an image — a page from an illustrated edition
+of Aesop's fable of the Crow and the Fox, in Ancient Greek. The image is injected
+as a base64 frame over the same WebSocket connection that carries voice and text.
+
+I then ask: "Look up korax in the lexicon" — korax, the crow, the first word of the
+Aesop fable. Logos invokes lookup underscore lexicon.
+
+The result is a full LSJ-style entry. Definitions numbered in order of attestation.
+Usage notes. Key textual references. This is not a paraphrase or a summary — it is
+a structured lexicon card with principal parts, numbered senses, and citations,
+rendered directly in the transcript.
+
+The session ends. Difficulty transitions from Intermediate to Advanced.
+
+The third segment is metrical scansion. I give Logos the opening line of the Iliad —
+Menin aeide thea, Peleiadeo Achileos — the first line of Western epic literature.
+
+Logos calls scan underscore meter. The response returns the complete dactylic
+hexameter pattern: each syllable marked long or short, the feet labeled one by one,
+and a note on the spondaic opening characteristic of Homeric verse. The pattern
+renders in the inspector font — long strokes and cups — foot by foot across the line.
+
+Each session in this demo resets cleanly between segments. One browser context.
+One page. Three tools. Three difficulty levels. The workflow is deliberate,
+repeatable, and presentation-ready.
+
+Logos is not a general-purpose chatbot. It is a tool-grounded scholarly console
+with structured outputs, visible reasoning surfaces, and a clear separation between
+spoken interaction and visual analysis.
+
+The interface supports voice, camera, close reading of pinned passages, and adaptive
+difficulty from beginner through advanced — designed for serious engagement with
+Ancient Greek texts.
+
+Thank you for watching.

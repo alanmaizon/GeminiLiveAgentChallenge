@@ -99,6 +99,37 @@ export default function ConsolePage() {
         videoRef={camera.videoRef}
         onClear={clearInspector}
       />
+
+      {/* Demo hooks: hidden controls for Playwright automation */}
+      <input
+        type="file"
+        accept="image/*"
+        data-testid="image-upload-input"
+        style={{ position: "absolute", left: "-9999px", opacity: 0 }}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (!file) return
+          const reader = new FileReader()
+          reader.onload = () => {
+            const result = reader.result as string
+            const b64 = result.split(",")[1]
+            sendImage(b64, file.type)
+          }
+          reader.readAsDataURL(file)
+        }}
+      />
+      {/* Difficulty setters — allow Playwright to change level between sessions
+          (WelcomeView is hidden once a session has started) */}
+      {(["beginner", "intermediate", "advanced"] as const).map((level) => (
+        <button
+          key={level}
+          data-testid={`set-difficulty-${level}`}
+          style={{ position: "absolute", left: "-9999px", opacity: 0 }}
+          onClick={() => setDifficulty(level)}
+          tabIndex={-1}
+          aria-hidden="true"
+        />
+      ))}
     </div>
   )
 }

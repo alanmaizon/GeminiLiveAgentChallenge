@@ -116,6 +116,30 @@ MOCK_PARSES: dict[str, Any] = {
         "definition": "human being, man (as opposed to gods or animals)",
         "ipa": "/án.tʰrɔː.pos/",
     },
+    "ἀλώπηξ": {
+        "word": "ἀλώπηξ",
+        "lemma": "ἀλώπηξ",
+        "transliteration": "alōpēx",
+        "part_of_speech": "Noun",
+        "gender": "Feminine",
+        "case": "Nominative",
+        "number": "Singular",
+        "definition": "fox (used figuratively of a cunning person)",
+        "ipa": "/a.lɔː.pɛːks/",
+        "notes": "3rd declension (-πεκ- stem). The fox is the archetypal trickster in Aesop.",
+    },
+    "κόραξ": {
+        "word": "κόραξ",
+        "lemma": "κόραξ",
+        "transliteration": "korax",
+        "part_of_speech": "Noun",
+        "gender": "Masculine",
+        "case": "Nominative",
+        "number": "Singular",
+        "definition": "crow, raven",
+        "ipa": "/kó.raks/",
+        "notes": "3rd declension (-ακ- stem). In Aesop's fable, the crow is duped by the fox's flattery.",
+    },
     "default": {
         "word": "—",
         "lemma": "—",
@@ -127,6 +151,28 @@ MOCK_PARSES: dict[str, Any] = {
 }
 
 MOCK_LEXICON: dict[str, Any] = {
+    "κόραξ": {
+        "lemma": "κόραξ",
+        "transliteration": "korax",
+        "part_of_speech": "Noun, Masculine, 3rd declension",
+        "definitions": [
+            "crow, raven",
+            "(figuratively) a cunning schemer who is himself easily outwitted",
+        ],
+        "usage": "Common in Aesop. The crow in Fable 124 holds meat in his beak; the fox flatters him into opening his mouth to 'sing', causing him to drop it.",
+        "key_refs": ["Aesop Fab. 124", "Ar. Av. 609"],
+    },
+    "ἀλώπηξ": {
+        "lemma": "ἀλώπηξ",
+        "transliteration": "alōpēx",
+        "part_of_speech": "Noun, Feminine, 3rd declension",
+        "definitions": [
+            "fox",
+            "(figuratively) a crafty, sly person",
+        ],
+        "usage": "The archetypal trickster in Greek fable (Aesop) and proverb. Contrast λύκος (wolf, brute force) with ἀλώπηξ (fox, cunning).",
+        "key_refs": ["Aesop Fab. 124", "Ar. Eq. 1037", "Pind. P. 2.78"],
+    },
     "μῆνις": {
         "lemma": "μῆνις",
         "transliteration": "mēnis",

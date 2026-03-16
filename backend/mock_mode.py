@@ -5,6 +5,7 @@ Follows the same message protocol as the live backend.
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Any
@@ -20,9 +21,34 @@ from models import (
 )
 from tools import execute_tool_mock
 
+# ── Greek text helpers ────────────────────────────────────────────────────────
+
+_GREEK_RE = re.compile(r"[\u0370-\u03FF\u1F00-\u1FFF]+")
+_GREEK_PHRASE_RE = re.compile(r"[\u0370-\u03FF\u1F00-\u1FFF][\u0370-\u03FF\u1F00-\u1FFF\s]*")
+
+
+def _extract_greek_word(text: str) -> str | None:
+    """Return the first standalone Greek word found in text."""
+    m = _GREEK_RE.search(text)
+    return m.group() if m else None
+
+
+def _extract_greek_phrase(text: str) -> str | None:
+    """Return the first continuous Greek run (words + spaces) found in text."""
+    m = _GREEK_PHRASE_RE.search(text)
+    return m.group().strip() if m else None
+
 # ── Mock response corpus ──────────────────────────────────────────────────────
 
 MOCK_RESPONSES = {
+    "scan_meter": (
+        "Excellent choice — the opening line of the Iliad is the ur-hexameter of Western literature.\n\n"
+        "I will invoke the metrical scanner now..."
+    ),
+    "lexicon": (
+        "Let me look that up in the lexicon for you.\n\n"
+        "I will invoke the lookup tool now..."
+    ),
     "hello": (
         "Χαῖρε! I am Logos (ΛΟΓΟΣ), your Ancient Greek scholarly companion. "
         "I am here to help you navigate the beauty and complexity of Ancient Greek — "
@@ -36,7 +62,7 @@ MOCK_RESPONSES = {
         "Μῆνιν ἄειδε θεά, Πηληϊάδεω Ἀχιλῆος...\n\n"
         "The Iliad opens with one of the most celebrated lines in all of world literature. "
         "Homer commands the goddess (Muse) to 'sing the wrath of Achilles, son of Peleus.' "
-        "The very first word — μῆνιν (mēnin), 'wrath' — arrives in the accusative case, "
+        "The very first word — μῆνιν, 'wrath' — arrives in the accusative case, "
         "the direct object of the imperative ἄειδε. This is no accident: Homer places "
         "the central theme of the entire epic at the very front of the sentence.\n\n"
         "The μῆνις of Achilles is not ordinary anger (θυμός). It is a sustained, divine-like "
@@ -94,8 +120,12 @@ def _classify_input(text: str) -> str:
         return "hello"
     if any(w in text_lower for w in ["iliad", "homer", "μῆνιν", "μηνιν", "achilles"]):
         return "iliad"
+    if any(w in text_lower for w in ["scan", "meter", "metre", "hexameter", "scansion", "rhythm", "foot", "feet"]):
+        return "scan_meter"
     if any(w in text_lower for w in ["parse", "morphol", "verb", "noun", "declens"]):
         return "parse"
+    if any(w in text_lower for w in ["lexicon", "look up", "lookup", "define", "definition", "lsj"]):
+        return "lexicon"
     if any(w in text_lower for w in ["pronounc", "ipa", "sound", "say"]):
         return "pronunciation"
     if any(w in text_lower for w in ["image", "photo", "picture", "see", "camera"]):
@@ -162,9 +192,94 @@ async def handle_mock_session(
     response_key = _classify_input(user_text)
     response_text = MOCK_RESPONSES[response_key]
 
-    # Occasionally inject a tool call for parse requests
+    # ── scan_meter ────────────────────────────────────────────────────────────
+    if response_key == "scan_meter":
+        scan_line = (
+            _extract_greek_phrase(user_text)
+            or "μῆνιν ἄειδε θεά Πηληϊάδεω Ἀχιλῆος"
+        )
+        preamble = MOCK_RESPONSES["scan_meter"]
+        full = ""
+        async for chunk in stream_mock_response(preamble):
+            await send(TextDeltaMessage(delta=chunk))
+            full += chunk
+
+        await asyncio.sleep(0.3)
+
+        call_id = f"call-{uuid.uuid4().hex[:8]}"
+        await send(ToolCallMessage(
+            tool_name="scan_meter",
+            args={"line": scan_line, "expected_meter": "Dactylic Hexameter"},
+            call_id=call_id,
+        ))
+        await asyncio.sleep(0.4)
+
+        result = execute_tool_mock("scan_meter", {"line": scan_line})
+        await send(ToolResultMessage(call_id=call_id, result=result))
+        await asyncio.sleep(0.2)
+
+        meter = result.get("meter", "Dactylic Hexameter")
+        pattern = result.get("pattern", "")
+        analysis = result.get("analysis", "")
+        explanation = (
+            f"\n\nThe line scans as **{meter}**.\n"
+            f"Pattern: {pattern}\n\n"
+            f"{analysis}"
+        )
+        async for chunk in stream_mock_response(explanation):
+            await send(TextDeltaMessage(delta=chunk))
+            full += chunk
+
+        await send(TextDoneMessage(full_text=full))
+        await send(LogMessage(event="output.done", data={"chars": len(full)}, timestamp=now))
+        return
+
+    # ── lookup_lexicon ────────────────────────────────────────────────────────
+    should_lookup = response_key == "lexicon"
+    # Extract the Greek word from the user text (best-effort), fallback to κόραξ
+    lexicon_lemma = _extract_greek_word(user_text) or "κόραξ"
+
+    if should_lookup:
+        preamble = MOCK_RESPONSES["lexicon"]
+        full = ""
+        async for chunk in stream_mock_response(preamble):
+            await send(TextDeltaMessage(delta=chunk))
+            full += chunk
+
+        await asyncio.sleep(0.3)
+
+        call_id = f"call-{uuid.uuid4().hex[:8]}"
+        await send(ToolCallMessage(
+            tool_name="lookup_lexicon",
+            args={"lemma": lexicon_lemma},
+            call_id=call_id,
+        ))
+        await asyncio.sleep(0.4)
+
+        result = execute_tool_mock("lookup_lexicon", {"lemma": lexicon_lemma})
+        await send(ToolResultMessage(call_id=call_id, result=result))
+        await asyncio.sleep(0.2)
+
+        explanation = (
+            f"\n\n**{result.get('lemma', lexicon_lemma)}** — "
+            f"{result.get('part_of_speech', '')}\n"
+            f"Primary meaning: {result.get('definitions', ['—'])[0]}\n"
+        )
+        if result.get("usage"):
+            explanation += f"Usage note: {result['usage']}"
+
+        async for chunk in stream_mock_response(explanation):
+            await send(TextDeltaMessage(delta=chunk))
+            full += chunk
+
+        await send(TextDoneMessage(full_text=full))
+        await send(LogMessage(event="output.done", data={"chars": len(full)}, timestamp=now))
+        return
+
+    # ── parse_greek ───────────────────────────────────────────────────────────
     should_parse = response_key == "parse" or "parse" in user_text.lower()
-    parse_word = "μῆνιν"  # Default demo word
+    # Extract the first Greek word from the prompt; fallback to μῆνιν
+    parse_word = _extract_greek_word(user_text) or "μῆνιν"
 
     if should_parse:
         # Emit partial text first
@@ -193,8 +308,7 @@ async def handle_mock_session(
         # Continue with explanation
         explanation = (
             f"\n\nHere is the full analysis:\n"
-            f"**{result.get('word', parse_word)}** → {result.get('lemma', '—')} "
-            f"({result.get('transliteration', '')})\n"
+            f"**{result.get('word', parse_word)}** → {result.get('lemma', '—')}\n"
             f"• {result.get('part_of_speech', '')}, {result.get('case', result.get('mood', ''))}, "
             f"{result.get('number', '')}\n"
             f"• Meaning: \"{result.get('definition', '')}\""
@@ -203,7 +317,7 @@ async def handle_mock_session(
             await send(TextDeltaMessage(delta=chunk))
             full += chunk
 
-        await send(TextDoneMessage(full_text=full + explanation))
+        await send(TextDoneMessage(full_text=full))
     else:
         # Plain streaming response
         full = ""

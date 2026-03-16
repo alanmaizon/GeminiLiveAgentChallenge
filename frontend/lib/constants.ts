@@ -49,7 +49,7 @@ import type { DifficultyLevel } from "./types"
 export const DIFFICULTY_INSTRUCTIONS: Record<DifficultyLevel, string> = {
   beginner:
     "\n\nUSER LEVEL: Beginner. Use simple English throughout. Translate all Greek immediately. " +
-    "Provide full morphology tables unprompted. Add encouragement. Avoid scholarly jargon.",
+    "Still use parse_greek/lookup_lexicon/scan_meter function calls for all analysis — never write morphology in plain text — but after receiving the tool result, explain each field in simple terms with extra encouragement. Avoid scholarly jargon.",
   intermediate:
     "\n\nUSER LEVEL: Intermediate. Balance English explanation with Greek. " +
     "Assume basic grammar knowledge. Provide partial translations and prompt the user to complete them.",

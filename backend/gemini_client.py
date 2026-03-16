@@ -57,6 +57,9 @@ def _sanitize_transcript(raw: str) -> str:
 # fields from the model-facing payload prevents them from being spoken aloud.
 # The full result is still forwarded to the frontend via ToolResultMessage so
 # ParseCard / LexiconCard / ScansionCard render with complete data.
+# Internal debug fields produced by meter.py — never needed in the UI card.
+_INTERNAL_RESULT_FIELDS = frozenset({"_timing_ms", "_timing_detail", "_method", "_note"})
+
 _VISUAL_ONLY_FIELDS: dict[str, frozenset] = {
     "parse_greek":    frozenset({"transliteration", "ipa", "principal_parts"}),
     "lookup_lexicon": frozenset({"transliteration", "principal_parts", "key_refs"}),
@@ -312,8 +315,15 @@ async def run_gemini_session(
 
                                     result = await execute_tool_live(fc.name, args, client)
 
+                                    # Strip internal debug fields (timing, method) before
+                                    # forwarding to the frontend — they're noise in the UI.
+                                    frontend_result = (
+                                        {k: v for k, v in result.items() if k not in _INTERNAL_RESULT_FIELDS}
+                                        if isinstance(result, dict) else result
+                                    )
+
                                     # Full result → frontend (ParseCard / LexiconCard get all fields)
-                                    await send(ToolResultMessage(call_id=call_id, result=result))
+                                    await send(ToolResultMessage(call_id=call_id, result=frontend_result))
                                     await send(LogMessage(
                                         event="tool.executed",
                                         data={"tool": fc.name, "call_id": call_id},

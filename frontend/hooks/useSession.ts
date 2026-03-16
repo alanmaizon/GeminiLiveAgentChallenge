@@ -54,8 +54,12 @@ export function useSession() {
   // one using AudioContext's internal clock, eliminating clicks/pops.
   const audioCtxRef = useRef<AudioContext | null>(null)
   const nextStartTimeRef = useRef(0)
+  // Set false on interrupt/endSession so in-flight audio.delta chunks
+  // don't recreate the AudioContext after it has been intentionally stopped.
+  const playbackEnabledRef = useRef(false)
 
   const scheduleAudioChunk = useCallback((base64Pcm: string) => {
+    if (!playbackEnabledRef.current) return
     try {
       const binary = atob(base64Pcm)
       const bytes = new Uint8Array(binary.length)
@@ -89,6 +93,7 @@ export function useSession() {
   }, [])
 
   const stopAudio = useCallback(() => {
+    playbackEnabledRef.current = false
     audioCtxRef.current?.close()
     audioCtxRef.current = null
     nextStartTimeRef.current = 0
@@ -115,8 +120,14 @@ export function useSession() {
       switch (msg.type) {
         case "status":
           setState((s) => ({ ...s, connectionState: msg.state as ConnectionState }))
-          if (msg.state === "live") startTimer()
-          if (msg.state === "ended" || msg.state === "error") stopTimer()
+          if (msg.state === "live") {
+            playbackEnabledRef.current = true
+            startTimer()
+          }
+          if (msg.state === "ended" || msg.state === "error") {
+            playbackEnabledRef.current = false
+            stopTimer()
+          }
           break
 
         case "session.started":
@@ -188,6 +199,12 @@ export function useSession() {
 
         case "output.audio.delta":
           scheduleAudioChunk(msg.audio)
+          break
+
+        case "output.audio.done":
+          // Audio turn complete — streaming indicator can go away even if
+          // the text transcription hasn't arrived yet.
+          setState((s) => ({ ...s, isAssistantStreaming: false }))
           break
 
         case "tool.call": {
@@ -348,16 +365,17 @@ export function useSession() {
   const interrupt = useCallback(() => {
     send({ type: "input.interrupt" })
     stopAudio() // Stop any currently playing audio immediately
+    // Clear both streaming and pending-tool refs so stale results from the
+    // interrupted turn cannot attach to the next assistant message.
+    streamingMessageIdRef.current = null
+    pendingToolResultRef.current = null
     setState((s) => ({
       ...s,
       isAssistantStreaming: false,
       transcript: s.transcript.map((m) =>
-        m.id === streamingMessageIdRef.current
-          ? { ...m, isStreaming: false, interrupted: true }
-          : m
+        m.isStreaming ? { ...m, isStreaming: false, interrupted: true } : m
       ),
     }))
-    streamingMessageIdRef.current = null
   }, [send, stopAudio])
 
   // ── Feature D: Contextual Passage Mode ───────────────────────────────────

@@ -28,32 +28,44 @@ export function LexiconCard({ result }: LexiconCardProps) {
       {/* Definitions */}
       {result.definitions && result.definitions.length > 0 && (
         <ol className="list-decimal list-inside mb-2 space-y-0.5">
-          {result.definitions.map((def, i) => (
-            <li key={i} className="text-sm" style={{ color: "var(--text-primary)" }}>
-              {typeof def === "string" ? def : (def as any).sense ?? JSON.stringify(def)}
-            </li>
-          ))}
+          {result.definitions.map((def, i) => {
+            let text: string
+            if (typeof def === "string") {
+              text = def
+            } else if (typeof (def as any).sense === "string") {
+              text = (def as any).sense
+            } else if (typeof (def as any).definition === "string") {
+              text = (def as any).definition
+            } else {
+              text = JSON.stringify(def)
+            }
+            return (
+              <li key={i} className="text-sm" style={{ color: "var(--text-primary)" }}>
+                {text}
+              </li>
+            )
+          })}
         </ol>
       )}
 
       {/* Usage note */}
       {result.usage && (
         <p className="text-xs italic mt-2" style={{ color: "var(--text-secondary)" }}>
-          {result.usage}
+          {typeof result.usage === "string" ? result.usage : JSON.stringify(result.usage)}
         </p>
       )}
 
       {/* Principal parts */}
       {result.principal_parts && (
         <p className="text-xs mt-1.5 greek leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-          {result.principal_parts}
+          {typeof result.principal_parts === "string" ? result.principal_parts : JSON.stringify(result.principal_parts)}
         </p>
       )}
 
       {/* Key refs */}
       {result.key_refs && result.key_refs.length > 0 && (
         <p className="text-xs mt-1.5 inspector-mono" style={{ color: "var(--text-muted)" }}>
-          {result.key_refs.join(" · ")}
+          {result.key_refs.map((r: unknown) => (typeof r === "string" ? r : JSON.stringify(r))).join(" · ")}
         </p>
       )}
     </div>
