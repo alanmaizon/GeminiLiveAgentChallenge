@@ -25,13 +25,20 @@ A realtime multimodal AI console for Ancient Greek scholarship. Speak, type, or 
 
 ## Architecture
 
-```
-Browser (Next.js)  ←── WebSocket ───►  FastAPI Backend  ───►  Gemini Live API
-                                               │
-                                          tools.py
-                                       ┌──────┴──────┐
-                                  meter.py      gemini-2.5-flash
-                              (local, <1 ms)   (JSON, thinking off)
+```mermaid
+flowchart LR
+    Browser["Browser (Next.js)"]
+    Backend["FastAPI Backend"]
+    Live["Gemini Live API"]
+    Tools["tools.py"]
+    Meter["meter.py · local"]
+    Flash["gemini-2.5-flash"]
+
+    Browser <-->|WebSocket| Backend
+    Backend -->|session| Live
+    Live -->|tool_call| Tools
+    Tools --> Meter
+    Tools --> Flash
 ```
 
 **WebSocket protocol** is the single integration contract. Every message has a `type` field — types are defined in `frontend/lib/types.ts` (TypeScript) and `backend/models.py` (Pydantic). These must stay in sync.
