@@ -34,7 +34,18 @@ jobs:
       - name: Build & push backend image
         run: |
           IMAGE="gcr.io/$PROJECT_ID/logos-backend"
-          gcloud builds submit --tag "$IMAGE" ./backend
+          BUILD_ID=$(gcloud builds submit --tag "$IMAGE" --async ./backend --format="value(id)")
+          echo "Cloud Build ID: $BUILD_ID"
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --format="value(status)")
+            echo "  status: $STATUS"
+            case "$STATUS" in
+              SUCCESS)   break ;;
+              FAILURE|CANCELLED|TIMEOUT|INTERNAL_ERROR)
+                echo "Build failed: $STATUS"; exit 1 ;;
+            esac
+            sleep 15
+          done
 
       - name: Deploy backend service
         run: |
@@ -98,10 +109,21 @@ jobs:
       - name: Build & push frontend image (WS URL baked in)
         run: |
           IMAGE="gcr.io/$PROJECT_ID/logos-frontend"
-          gcloud builds submit \
+          BUILD_ID=$(gcloud builds submit \
             --config frontend/cloudbuild.yaml \
             --substitutions "_IMAGE=$IMAGE,_WS_URL=${{ steps.ws.outputs.ws_url }}" \
-            ./frontend
+            --async ./frontend --format="value(id)")
+          echo "Cloud Build ID: $BUILD_ID"
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --format="value(status)")
+            echo "  status: $STATUS"
+            case "$STATUS" in
+              SUCCESS)   break ;;
+              FAILURE|CANCELLED|TIMEOUT|INTERNAL_ERROR)
+                echo "Build failed: $STATUS"; exit 1 ;;
+            esac
+            sleep 15
+          done
 
       - name: Deploy frontend service
         run: |
