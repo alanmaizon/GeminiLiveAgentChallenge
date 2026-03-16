@@ -6,7 +6,9 @@ generate structured philological data. In mock mode, hardcoded examples are used
 """
 
 from typing import Any
+import asyncio
 import json
+import time
 
 # ── Tool function declarations (sent to Gemini) ───────────────────────────────
 
@@ -192,23 +194,35 @@ def execute_tool_mock(tool_name: str, args: dict[str, Any]) -> Any:
     return {"error": f"Unknown tool: {tool_name}"}
 
 
+# Hard timeout for the LLM tool calls (parse_greek, lookup_lexicon).
+# scan_meter never reaches the LLM path — it uses the local scanner.
+_LLM_TOOL_TIMEOUT_SECS = 5.0
+
+
 async def execute_tool_live(
     tool_name: str, args: dict[str, Any], gemini_client: Any
 ) -> Any:
     """
-    Execute a tool using a separate Gemini non-streaming call for structured output.
-    Falls back to mock if the call fails.
-    """
-    # GEMINI_LIVE: wire structured tool execution via a non-streaming Gemini call
-    # Example prompt for parse_greek:
-    #   "Return a JSON morphological analysis of the Ancient Greek word '{word}'.
-    #    Include: lemma, transliteration, part_of_speech, tense, voice, mood,
-    #    person, number, gender, case, definition, principal_parts (if verb).
-    #    Respond ONLY with valid JSON."
-    try:
-        from google import genai
+    Execute a tool call.
 
-        word = args.get("word", args.get("lemma", args.get("line", "")))
+    scan_meter  → always local deterministic scanner (meter.py), sub-millisecond.
+    parse_greek → Gemini non-streaming call, thinking disabled, 5 s hard timeout.
+    lookup_lexicon → same as parse_greek.
+    """
+    # ── scan_meter: fully local, no LLM ──────────────────────────────────────
+    if tool_name == "scan_meter":
+        from meter import scan_hexameter
+        line = args.get("line", "")
+        expected = args.get("expected_meter", "Dactylic Hexameter")
+        t0 = time.perf_counter()
+        result = scan_hexameter(line, expected)
+        elapsed = round((time.perf_counter() - t0) * 1000, 2)
+        print(f"[scan_meter] local scanner: {elapsed} ms (cached={elapsed < 0.1})")
+        return result
+
+    # ── parse_greek / lookup_lexicon: Gemini non-streaming ───────────────────
+    try:
+        word = args.get("word", args.get("lemma", ""))
         if tool_name == "parse_greek":
             prompt = (
                 f"Return a JSON morphological analysis of the Ancient Greek word '{word}'. "
@@ -223,13 +237,6 @@ async def execute_tool_live(
                 "in LSJ style. Include: lemma, transliteration, part_of_speech, "
                 "definitions (array), usage, key_refs (array). Respond ONLY with valid JSON."
             )
-        elif tool_name == "scan_meter":
-            context = args.get("expected_meter", "dactylic hexameter")
-            prompt = (
-                f"Return a JSON metrical scansion for the line of Greek verse: '{word}'. "
-                f"Expected meter: {context}. Include: line, meter, pattern (using — and ∪∪), "
-                "analysis. Respond ONLY with valid JSON."
-            )
         else:
             return execute_tool_mock(tool_name, args)
 
@@ -238,13 +245,30 @@ async def execute_tool_live(
 
         from google.genai import types as genai_types  # type: ignore[import]
 
-        response = await gemini_client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
+        # Disable extended thinking (thinking_budget=0) — otherwise gemini-2.5-flash
+        # can stall for 60-120 s before emitting a single token.
+        try:
+            thinking_config = genai_types.ThinkingConfig(thinking_budget=0)
+            gen_config = genai_types.GenerateContentConfig(
                 response_mime_type="application/json",
-            ),
-        )
+                thinking_config=thinking_config,
+            )
+        except AttributeError:
+            # Older SDK version without ThinkingConfig — fall back gracefully
+            gen_config = genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+            )
+
+        t0 = time.perf_counter()
+        async with asyncio.timeout(_LLM_TOOL_TIMEOUT_SECS):
+            response = await gemini_client.aio.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=gen_config,
+            )
+        elapsed = round((time.perf_counter() - t0) * 1000, 2)
+        print(f"[{tool_name}] LLM call: {elapsed} ms")
+
         text = response.text or ""
         # Strip markdown fences the model may add despite response_mime_type
         text = text.strip()
@@ -253,11 +277,15 @@ async def execute_tool_live(
             text = text.rsplit("```", 1)[0]
         return json.loads(text)
 
+    except TimeoutError:
+        print(f"[execute_tool_live] {tool_name} timed out after {_LLM_TOOL_TIMEOUT_SECS}s")
+        result = execute_tool_mock(tool_name, args)
+        result["_error"] = f"Tool timed out after {_LLM_TOOL_TIMEOUT_SECS}s"
+        return result
     except Exception as exc:
         import traceback as tb
         tb.print_exc()
         print(f"[execute_tool_live] falling back to mock due to: {exc}")
-        # Surface the real error in the tool card so it's visible in Inspector
         result = execute_tool_mock(tool_name, args)
         result["_error"] = str(exc)
         return result

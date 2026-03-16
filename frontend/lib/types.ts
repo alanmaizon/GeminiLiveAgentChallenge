@@ -75,7 +75,7 @@ export interface LexiconResult {
   lemma: string
   transliteration?: string
   part_of_speech: string
-  definitions: string[]
+  definitions: (string | Record<string, unknown>)[]
   usage?: string
   key_refs?: string[]
   principal_parts?: string

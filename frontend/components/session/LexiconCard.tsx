@@ -30,7 +30,7 @@ export function LexiconCard({ result }: LexiconCardProps) {
         <ol className="list-decimal list-inside mb-2 space-y-0.5">
           {result.definitions.map((def, i) => (
             <li key={i} className="text-sm" style={{ color: "var(--text-primary)" }}>
-              {def}
+              {typeof def === "string" ? def : (def as any).sense ?? JSON.stringify(def)}
             </li>
           ))}
         </ol>
