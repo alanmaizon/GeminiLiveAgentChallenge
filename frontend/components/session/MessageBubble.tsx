@@ -5,6 +5,8 @@ import { Copy, Check } from "lucide-react"
 import type { TranscriptMessage } from "@/lib/types"
 import { formatTimestamp } from "@/lib/utils"
 import { ParseCard } from "./ParseCard"
+import { LexiconCard } from "./LexiconCard"
+import { ScansionCard } from "./ScansionCard"
 import { ImageMessage } from "./ImageMessage"
 import { StreamingIndicator } from "./StreamingIndicator"
 import { cn } from "@/lib/utils"
@@ -97,10 +99,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Parse result card */}
-        {message.parseResult && (
-          <ParseCard result={message.parseResult} />
-        )}
+        {/* Tool result cards */}
+        {message.parseResult && <ParseCard result={message.parseResult} />}
+        {message.lexiconResult && <LexiconCard result={message.lexiconResult} />}
+        {message.scanResult && <ScansionCard result={message.scanResult} />}
 
         {/* Copy button */}
         {message.content && !message.isStreaming && (

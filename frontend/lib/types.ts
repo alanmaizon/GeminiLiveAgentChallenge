@@ -44,7 +44,10 @@ export interface TranscriptMessage {
   timestamp: Date
   image?: string       // base64 data URL for inline images
   mimeType?: string
+  // Tool result cards — at most one is set per message
   parseResult?: ParseResult
+  lexiconResult?: LexiconResult
+  scanResult?: ScansionResult
 }
 
 // ── Tool results ──────────────────────────────────────────────────────────────
@@ -78,11 +81,19 @@ export interface LexiconResult {
   principal_parts?: string
 }
 
+export interface ScansionFoot {
+  foot: number
+  syllables: string
+  pattern: string
+  type: string
+  notes?: string
+}
+
 export interface ScansionResult {
   line: string
   meter: string
   pattern: string
-  analysis: string
+  analysis: string | ScansionFoot[]
 }
 
 // ── Inspector ─────────────────────────────────────────────────────────────────

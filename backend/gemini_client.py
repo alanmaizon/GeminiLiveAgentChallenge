@@ -22,9 +22,62 @@ Session methods used (non-deprecated):
 import asyncio
 import base64
 import json
+import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+# Gemini Live audio-transcription can emit internal control tokens like <ctrl46>
+# alongside genuine non-printable characters. Strip both before forwarding text.
+_CTRL_TOKEN_RE = re.compile(r'<ctrl\d+>', re.IGNORECASE)
+_CTRL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufeff]')
+# Matches: GreekToken (single-word Latin/accented ≤30 chars) — strips transliterations.
+# Preserves multi-word parentheticals (εἰμί (to be)) and prose parens (Peter (not Paul)).
+_TRANSLIT_PARENS_RE = re.compile(
+    r'([^\s]*[\u0370-\u03ff\u1f00-\u1fff][^\s]*)\s*\([A-Za-z\u00c0-\u024f\'-]{1,30}\)',
+)
+
+
+def _sanitize_transcript(raw: str) -> str:
+    """Remove control tokens, non-printable chars, and parenthetical transliterations."""
+    cleaned = _CTRL_TOKEN_RE.sub('', raw)
+    cleaned = _CTRL_CHAR_RE.sub('', cleaned)
+    cleaned = _TRANSLIT_PARENS_RE.sub(r'\1', cleaned)
+    if cleaned != raw:
+        logger.debug("transcript sanitized — raw=%r → cleaned=%r", raw[:120], cleaned[:120])
+    return cleaned
+
+
+# ── Spoken-safe tool result ────────────────────────────────────────────────────
+# Fields that belong in the UI card but must NOT be fed back to the live model.
+# The model narrates whatever it receives in send_tool_response; removing these
+# fields from the model-facing payload prevents them from being spoken aloud.
+# The full result is still forwarded to the frontend via ToolResultMessage so
+# ParseCard / LexiconCard / ScansionCard render with complete data.
+_VISUAL_ONLY_FIELDS: dict[str, frozenset] = {
+    "parse_greek":    frozenset({"transliteration", "ipa", "principal_parts"}),
+    "lookup_lexicon": frozenset({"transliteration", "principal_parts", "key_refs"}),
+    # pattern is visual (— ∪∪ | notation); analysis can be a complex foot-by-foot
+    # array that the model would otherwise narrate verbatim — strip both.
+    "scan_meter":     frozenset({"pattern", "analysis"}),
+}
+
+
+def _make_spoken_safe(tool_name: str, result: Any) -> Any:
+    """Return *result* with visual-only fields removed.
+
+    The model uses this dict to compose its verbal summary; stripping
+    transliteration, IPA, principal parts, and scansion patterns ensures the
+    model cannot narrate them even if it ignores the system-prompt rules.
+    The caller is responsible for sending the full result to the frontend.
+    """
+    if not isinstance(result, dict):
+        return result
+    drop = _VISUAL_ONLY_FIELDS.get(tool_name, frozenset())
+    return {k: v for k, v in result.items() if k not in drop}
 
 from config import settings, USE_VERTEX_AI
 from models import (
@@ -54,10 +107,7 @@ def _build_client() -> Any:
             project=settings.gcp_project_id,
             location=settings.gcp_region,
         )
-    return genai.Client(
-        api_key=settings.gemini_api_key,
-        http_options={"api_version": "v1beta"},
-    )
+    return genai.Client(api_key=settings.gemini_api_key)
 
 
 async def run_gemini_session(
@@ -90,6 +140,8 @@ async def run_gemini_session(
             else None
         ),
         tools=[{"function_declarations": TOOL_DECLARATIONS}],
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
     )
 
     await send(StatusMessage(state="connecting"))
@@ -136,12 +188,13 @@ async def run_gemini_session(
                         break
 
                     elif msg_type == "input.text":
-                        # Turn-based text — use send_client_content.
-                        # Note: do not mix with send_realtime_input in the
-                        # same conversation (SDK restriction).
+                        # SDK 1.67+ requires types.Content, not a bare string.
                         _in_realtime_mode = False
                         await session.send_client_content(
-                            turns=msg["text"],
+                            turns=types.Content(
+                                role="user",
+                                parts=[types.Part(text=msg["text"])],
+                            ),
                             turn_complete=True,
                         )
 
@@ -196,83 +249,96 @@ async def run_gemini_session(
                         await send(LogMessage(event=msg_type, timestamp=now()))
 
             async def receive_from_gemini() -> None:
+                # session.receive() yields exactly ONE model turn then stops —
+                # the SDK breaks internally after turn_complete (confirmed by
+                # reading the source). Re-enter it after each turn so the
+                # coroutine keeps running for the full multi-turn session.
                 current_text = ""
-                async for response in session.receive():
-                    # ── Diagnostic: emit raw event type to inspector ─────────
-                    if getattr(response, "setup_complete", None):
-                        await send(LogMessage(event="gemini.setup_complete", timestamp=now()))
-                        continue  # Nothing to forward; session is ready
+                while True:
+                    try:
+                        async for response in session.receive():
+                            # ── Diagnostic: emit raw event type to inspector ─────
+                            if getattr(response, "setup_complete", None):
+                                await send(LogMessage(event="gemini.setup_complete", timestamp=now()))
+                                continue  # Nothing to forward; session is ready
 
-                    # Determine and log the top-level event type.
-                    # LiveServerMessage schema:
-                    #   .server_content.model_turn.parts  → text / audio parts
-                    #   .server_content.turn_complete     → end-of-turn flag
-                    #   .tool_call.function_calls         → function call list
-                    if getattr(response, "server_content", None) is not None:
-                        evt = "gemini.server_content"
-                    elif getattr(response, "tool_call", None) is not None:
-                        evt = "gemini.tool_call"
-                    else:
-                        evt = "gemini.unknown"
-                    await send(LogMessage(event=evt, timestamp=now()))
+                            if getattr(response, "server_content", None) is not None:
+                                evt = "gemini.server_content"
+                            elif getattr(response, "tool_call", None) is not None:
+                                evt = "gemini.tool_call"
+                            else:
+                                evt = "gemini.unknown"
+                            await send(LogMessage(event=evt, timestamp=now()))
 
-                    # ── server_content: text + turn_complete (SDK ≥ 1.67) ────
-                    # Text is aggregated at server_content.text; audio is
-                    # delivered separately via response.media (not via parts).
-                    server_content = getattr(response, "server_content", None)
-                    if server_content is not None:
-                        text = getattr(server_content, "text", None)
-                        if text:
-                            await send(TextDeltaMessage(delta=text))
-                            current_text += text
+                            # ── server_content: audio parts + transcription ───────
+                            server_content = getattr(response, "server_content", None)
+                            if server_content is not None:
+                                model_turn = getattr(server_content, "model_turn", None)
+                                if model_turn is not None:
+                                    for part in (getattr(model_turn, "parts", None) or []):
+                                        inline = getattr(part, "inline_data", None)
+                                        if inline is not None:
+                                            data = getattr(inline, "data", None)
+                                            if data:
+                                                await send(AudioDeltaMessage(audio=pcm_to_base64(data)))
 
-                        if getattr(server_content, "turn_complete", False):
-                            if current_text:
-                                await send(TextDoneMessage(full_text=current_text))
-                                current_text = ""
-                            await send(AudioDoneMessage())
+                                out_tx = getattr(server_content, "output_transcription", None)
+                                if out_tx is not None:
+                                    tx_text = getattr(out_tx, "text", None)
+                                    if tx_text:
+                                        tx_text = _sanitize_transcript(tx_text)
+                                        if tx_text:  # may be empty after stripping
+                                            await send(TextDeltaMessage(delta=tx_text))
+                                            current_text += tx_text
 
-                    # ── Audio: response.media (SDK ≥ 1.67) ───────────────────
-                    media = getattr(response, "media", None)
-                    if media:
-                        audio_bytes = getattr(media[0], "data", None)
-                        if audio_bytes:
-                            await send(AudioDeltaMessage(audio=pcm_to_base64(audio_bytes)))
+                                if getattr(server_content, "turn_complete", False):
+                                    if current_text:
+                                        await send(TextDoneMessage(full_text=current_text))
+                                        current_text = ""
+                                    await send(AudioDoneMessage())
 
-                    # ── Tool / function call ─────────────────────────────────
-                    tool_call = getattr(response, "tool_call", None)
-                    if tool_call is not None:
-                        for fc in (getattr(tool_call, "function_calls", None) or []):
-                            call_id: str = getattr(fc, "id", None) or f"call-{uuid.uuid4().hex[:8]}"
-                            args: dict[str, Any] = dict(fc.args) if getattr(fc, "args", None) else {}
+                            # ── Tool / function call ─────────────────────────────
+                            tool_call = getattr(response, "tool_call", None)
+                            if tool_call is not None:
+                                for fc in (getattr(tool_call, "function_calls", None) or []):
+                                    call_id: str = getattr(fc, "id", None) or f"call-{uuid.uuid4().hex[:8]}"
+                                    args: dict[str, Any] = dict(fc.args) if getattr(fc, "args", None) else {}
 
-                            await send(ToolCallMessage(
-                                tool_name=fc.name,
-                                args=args,
-                                call_id=call_id,
-                            ))
+                                    await send(ToolCallMessage(
+                                        tool_name=fc.name,
+                                        args=args,
+                                        call_id=call_id,
+                                    ))
 
-                            result = await execute_tool_live(fc.name, args, client)
+                                    result = await execute_tool_live(fc.name, args, client)
 
-                            await send(ToolResultMessage(call_id=call_id, result=result))
-                            await send(LogMessage(
-                                event="tool.executed",
-                                data={"tool": fc.name, "call_id": call_id},
-                                timestamp=now(),
-                            ))
+                                    # Full result → frontend (ParseCard / LexiconCard get all fields)
+                                    await send(ToolResultMessage(call_id=call_id, result=result))
+                                    await send(LogMessage(
+                                        event="tool.executed",
+                                        data={"tool": fc.name, "call_id": call_id},
+                                        timestamp=now(),
+                                    ))
 
-                            # Return the tool result to Gemini using typed objects.
-                            await session.send_tool_response(
-                                function_responses=types.LiveClientToolResponse(
-                                    function_responses=[
-                                        types.FunctionResponse(
+                                    # Spoken-safe result → model (strips transliteration, IPA,
+                                    # principal parts, etc. so the model cannot narrate them)
+                                    spoken_result = _make_spoken_safe(fc.name, result)
+                                    await session.send_tool_response(
+                                        function_responses=types.FunctionResponse(
                                             name=fc.name,
                                             id=call_id,
-                                            response={"output": result},
+                                            response={"output": spoken_result},
                                         )
-                                    ]
-                                )
-                            )
+                                    )
+                    except Exception as exc:
+                        import traceback as tb
+                        tb.print_exception(type(exc), exc, exc.__traceback__)
+                        await send(LogMessage(
+                            event="recv.error",
+                            data={"error": str(exc)},
+                            timestamp=now(),
+                        ))
+                        break
 
             client_task = asyncio.create_task(receive_from_client())
             send_task = asyncio.create_task(send_to_gemini())

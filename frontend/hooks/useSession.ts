@@ -8,13 +8,16 @@ import type {
   ConnectionState,
   DifficultyLevel,
   InspectorEvent,
+  LexiconResult,
+  ParseResult,
+  ScansionResult,
   SessionState,
   ToolCallRecord,
   TranscriptMessage,
   ServerMessage,
 } from "@/lib/types"
 import { DIFFICULTY_INSTRUCTIONS } from "@/lib/constants"
-import { generateId } from "@/lib/utils"
+import { generateId, sanitizeText } from "@/lib/utils"
 
 const INITIAL_STATE: SessionState = {
   connectionState: "idle",
@@ -32,8 +35,19 @@ const INITIAL_STATE: SessionState = {
 export function useSession() {
   const [state, setState] = useState<SessionState>(INITIAL_STATE)
   const streamingMessageIdRef = useRef<string | null>(null)
+  // Maps call_id → tool_name so tool.result knows which card to attach.
+  const toolCallNamesRef = useRef<Map<string, string>>(new Map())
+  // Holds a tool result that arrived before any text delta for the current turn
+  // (i.e. the model called a tool before speaking). Applied to the first message
+  // chunk created for this turn. Stores whichever card field is appropriate.
+  type PendingToolResult = Pick<TranscriptMessage, "parseResult" | "lexiconResult" | "scanResult">
+  const pendingToolResultRef = useRef<PendingToolResult | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const systemInstructionRef = useRef<string>("")
+  // Tracks whether the pinned passage has already been forwarded to Gemini in
+  // the current session. Reset on each startSession call so a pre-loaded
+  // passage is re-sent whenever a new session begins.
+  const pinnedPassageSentRef = useRef(false)
 
   // ── Gapless audio playback ───────────────────────────────────────────────
   // Each incoming PCM chunk is scheduled precisely at the end of the previous
@@ -51,6 +65,7 @@ export function useSession() {
         audioCtxRef.current = new AudioContext({ sampleRate: 24000 })
       }
       const ctx = audioCtxRef.current
+      if (ctx.state === "suspended") ctx.resume()
 
       const int16 = new Int16Array(bytes.buffer)
       const float32 = new Float32Array(int16.length)
@@ -114,55 +129,69 @@ export function useSession() {
           break
 
         case "output.text.delta": {
-          setState((s) => {
-            const id = streamingMessageIdRef.current
-            if (id) {
-              return {
-                ...s,
-                isAssistantStreaming: true,
-                tokenCount: s.tokenCount + 1,
-                transcript: s.transcript.map((m) =>
-                  m.id === id ? { ...m, content: m.content + msg.delta } : m
-                ),
-              }
-            }
+          const delta = sanitizeText(msg.delta)
+          if (!delta) break // nothing left after stripping control chars
+          const existingId = streamingMessageIdRef.current
+          if (existingId) {
+            // Append to the existing streaming message.
+            setState((s) => ({
+              ...s,
+              isAssistantStreaming: true,
+              tokenCount: s.tokenCount + 1,
+              transcript: s.transcript.map((m) =>
+                m.id === existingId ? { ...m, content: m.content + delta } : m
+              ),
+            }))
+          } else {
+            // First chunk of a new turn — assign ref BEFORE setState so the
+            // updater is pure under React Strict Mode's double-invocation.
+            // Also drain any tool result that arrived before this first chunk.
             const newId = generateId()
             streamingMessageIdRef.current = newId
+            const pendingTool = pendingToolResultRef.current
+            pendingToolResultRef.current = null
             const newMsg: TranscriptMessage = {
               id: newId,
               role: "assistant",
-              content: msg.delta,
+              content: delta,
               isStreaming: true,
               timestamp: new Date(),
+              ...(pendingTool ?? {}),
             }
-            return {
+            setState((s) => ({
               ...s,
               isAssistantStreaming: true,
               tokenCount: s.tokenCount + 1,
               transcript: [...s.transcript, newMsg],
-            }
-          })
+            }))
+          }
           break
         }
 
-        case "output.text.done":
+        case "output.text.done": {
+          // Capture and clear refs BEFORE setState — pure updater, Strict Mode safe.
+          const doneId = streamingMessageIdRef.current
+          streamingMessageIdRef.current = null
+          pendingToolResultRef.current = null // discard stale pending tool result
+          const fullText = sanitizeText(msg.full_text)
           setState((s) => ({
             ...s,
             isAssistantStreaming: false,
             transcript: s.transcript.map((m) =>
-              m.id === streamingMessageIdRef.current
-                ? { ...m, isStreaming: false, content: msg.full_text }
+              m.id === doneId
+                ? { ...m, isStreaming: false, content: fullText }
                 : m
             ),
           }))
-          streamingMessageIdRef.current = null
           break
+        }
 
         case "output.audio.delta":
           scheduleAudioChunk(msg.audio)
           break
 
         case "tool.call": {
+          toolCallNamesRef.current.set(msg.call_id, msg.tool_name)
           const record: ToolCallRecord = {
             id: generateId(),
             callId: msg.call_id,
@@ -174,19 +203,42 @@ export function useSession() {
           break
         }
 
-        case "tool.result":
-          setState((s) => ({
-            ...s,
-            toolCalls: s.toolCalls.map((tc) =>
-              tc.callId === msg.call_id ? { ...tc, result: msg.result } : tc
-            ),
-            transcript: s.transcript.map((m) =>
-              m.id === streamingMessageIdRef.current
-                ? { ...m, parseResult: msg.result as TranscriptMessage["parseResult"] }
-                : m
-            ),
-          }))
+        case "tool.result": {
+          const toolName = toolCallNamesRef.current.get(msg.call_id) ?? "parse_greek"
+          // Route result to the correct card field based on which tool fired.
+          const cardPatch: Pick<TranscriptMessage, "parseResult" | "lexiconResult" | "scanResult"> =
+            toolName === "lookup_lexicon"
+              ? { lexiconResult: msg.result as LexiconResult }
+              : toolName === "scan_meter"
+              ? { scanResult: msg.result as ScansionResult }
+              : { parseResult: msg.result as ParseResult }
+
+          const currentId = streamingMessageIdRef.current
+          if (currentId) {
+            // Streaming message already exists — attach card to it.
+            setState((s) => ({
+              ...s,
+              toolCalls: s.toolCalls.map((tc) =>
+                tc.callId === msg.call_id ? { ...tc, result: msg.result } : tc
+              ),
+              transcript: s.transcript.map((m) =>
+                m.id === currentId ? { ...m, ...cardPatch } : m
+              ),
+            }))
+          } else {
+            // No streaming message yet — the model called the tool before
+            // emitting any text. Park the result; it will be applied to
+            // the next message chunk in output.text.delta.
+            pendingToolResultRef.current = cardPatch
+            setState((s) => ({
+              ...s,
+              toolCalls: s.toolCalls.map((tc) =>
+                tc.callId === msg.call_id ? { ...tc, result: msg.result } : tc
+              ),
+            }))
+          }
           break
+        }
 
         case "error":
           setState((s) => ({ ...s, connectionState: "error" }))
@@ -244,6 +296,7 @@ export function useSession() {
       // Append difficulty modifier to the system instruction
       const fullInstruction = systemInstruction + DIFFICULTY_INSTRUCTIONS[difficulty]
       systemInstructionRef.current = fullInstruction
+      pinnedPassageSentRef.current = false // allow pre-loaded passage to be sent
       setState((s) => ({
         ...INITIAL_STATE,
         connectionState: "connecting",
@@ -308,11 +361,46 @@ export function useSession() {
   }, [send, stopAudio])
 
   // ── Feature D: Contextual Passage Mode ───────────────────────────────────
+
+  // If the passage was pinned BEFORE the session started, send it as soon as
+  // the session goes live. The ref prevents double-sending if loadPassage
+  // already forwarded it in-session.
+  useEffect(() => {
+    if (
+      state.connectionState === "live" &&
+      state.pinnedPassage !== null &&
+      !pinnedPassageSentRef.current
+    ) {
+      pinnedPassageSentRef.current = true
+      send({
+        type: "input.text",
+        text: `[Passage loaded for close reading]\n\n${state.pinnedPassage}\n\nPlease acknowledge this passage and stand by for questions about it.`,
+      })
+      setState((s) =>
+        s.pinnedPassage
+          ? {
+              ...s,
+              transcript: [
+                ...s.transcript,
+                {
+                  id: generateId(),
+                  role: "user" as const,
+                  content: `[Passage loaded for close reading]\n\n${s.pinnedPassage}`,
+                  timestamp: new Date(),
+                },
+              ],
+            }
+          : s
+      )
+    }
+  }, [state.connectionState, state.pinnedPassage, send])
+
   const loadPassage = useCallback(
     (text: string) => {
       setState((s) => ({ ...s, pinnedPassage: text }))
       if (state.connectionState === "live") {
         // Send the passage to the model as context
+        pinnedPassageSentRef.current = true
         send({
           type: "input.text",
           text: `[Passage loaded for close reading]\n\n${text}\n\nPlease acknowledge this passage and stand by for questions about it.`,

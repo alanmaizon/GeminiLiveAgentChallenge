@@ -14,9 +14,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "parse_greek",
         "description": (
-            "Analyze the morphology of an Ancient Greek word. Returns part of speech, "
-            "tense, mood, voice, person, number, gender, case, degree as applicable, "
-            "plus lemma, definition, and principal parts for verbs."
+            "ALWAYS call this function when performing morphological analysis of an Ancient Greek word. "
+            "Do NOT write morphology tables or grammatical breakdowns in plain text — invoke this function instead. "
+            "Returns part of speech, tense, mood, voice, person, number, gender, case, degree as applicable, "
+            "plus lemma, transliteration, definition, and principal parts for verbs."
         ),
         "parameters": {
             "type": "object",
@@ -36,8 +37,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "lookup_lexicon",
         "description": (
-            "Look up a Greek word in the lexicon. Returns a summary entry with "
-            "definitions, usage notes, and key references."
+            "ALWAYS call this function when providing a lexicon entry or definition for a Greek word. "
+            "Do NOT write lexicon entries in plain text — invoke this function instead. "
+            "Returns a summary entry with definitions, usage notes, and key references."
         ),
         "parameters": {
             "type": "object",
@@ -53,8 +55,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "scan_meter",
         "description": (
-            "Perform metrical scansion on a line of Greek verse. Returns the scansion "
-            "pattern, meter type, and any notable features."
+            "ALWAYS call this function when performing metrical scansion on a line of Greek verse. "
+            "Do NOT write scansion patterns in plain text — invoke this function instead. "
+            "Returns the scansion pattern, meter type, and any notable features."
         ),
         "parameters": {
             "type": "object",
@@ -235,14 +238,26 @@ async def execute_tool_live(
 
         from google.genai import types as genai_types  # type: ignore[import]
 
-        response = gemini_client.models.generate_content(
-            model="gemini-2.0-flash-001",
+        response = await gemini_client.aio.models.generate_content(
+            model="gemini-2.5-flash",
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 response_mime_type="application/json",
             ),
         )
-        return json.loads(response.text)
+        text = response.text or ""
+        # Strip markdown fences the model may add despite response_mime_type
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]
+            text = text.rsplit("```", 1)[0]
+        return json.loads(text)
 
-    except Exception:
-        return execute_tool_mock(tool_name, args)
+    except Exception as exc:
+        import traceback as tb
+        tb.print_exc()
+        print(f"[execute_tool_live] falling back to mock due to: {exc}")
+        # Surface the real error in the tool card so it's visible in Inspector
+        result = execute_tool_mock(tool_name, args)
+        result["_error"] = str(exc)
+        return result
