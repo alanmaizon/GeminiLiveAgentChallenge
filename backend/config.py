@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     gcp_project_id: Optional[str] = None
     gcp_region: str = "us-central1"
 
-    gemini_model: str = "gemini-2.0-flash-live-001"
+    gemini_model: str = "gemini-live-2.5-flash-native-audio"
     mock_mode: bool = False
     allowed_origins: str = "http://localhost:3000"
 
