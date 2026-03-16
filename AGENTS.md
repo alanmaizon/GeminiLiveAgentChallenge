@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for AI coding agents working in this repository.
 
 ## Commands
 
@@ -46,9 +46,9 @@ MOCK_MODE=true docker compose up   # force mock mode
 
 **Mock mode** is auto-activated when `GEMINI_API_KEY` is unset or `MOCK_MODE=true`. `backend/mock_mode.py` replicates the exact protocol — the frontend cannot distinguish mock from live.
 
-**Tool execution:** When Gemini calls `parse_greek`, `lookup_lexicon`, or `scan_meter`, the backend in `tools.py` executes the tool (using a separate non-streaming Gemini call in production, hardcoded examples in mock mode), then sends both `tool.call` and `tool.result` events to the frontend before returning the result to Gemini.
+**Tool execution:** When the model calls `parse_greek`, `lookup_lexicon`, or `scan_meter`, the backend in `tools.py` executes the tool (using a separate non-streaming model call in production, hardcoded examples in mock mode), then sends both `tool.call` and `tool.result` events to the frontend before returning the result to the model.
 
-**Audio:** Browser captures PCM 16-bit 16kHz mono via `ScriptProcessorNode` → base64 → WebSocket → Gemini Live. Gemini audio responses arrive as base64 PCM chunks → `AudioContext` for playback. Look for `# GEMINI_LIVE:` comments for wiring points.
+**Audio:** Browser captures PCM 16-bit 16kHz mono via `AudioWorkletNode` → base64 → WebSocket → Gemini Live. Audio responses arrive as base64 PCM chunks → `AudioContext` for playback. Look for `# GEMINI_LIVE:` comments for wiring points.
 
 ## Key Files
 
