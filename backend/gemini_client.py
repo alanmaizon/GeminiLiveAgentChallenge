@@ -56,7 +56,7 @@ def _build_client() -> Any:
         )
     return genai.Client(
         api_key=settings.gemini_api_key,
-        http_options={"api_version": "v1alpha"},
+        http_options={"api_version": "v1"},
     )
 
 
@@ -216,31 +216,28 @@ async def run_gemini_session(
                         evt = "gemini.unknown"
                     await send(LogMessage(event=evt, timestamp=now()))
 
-                    # ── server_content: text + audio parts ───────────────────
+                    # ── server_content: text + turn_complete (SDK ≥ 1.67) ────
+                    # Text is aggregated at server_content.text; audio is
+                    # delivered separately via response.media (not via parts).
                     server_content = getattr(response, "server_content", None)
                     if server_content is not None:
-                        model_turn = getattr(server_content, "model_turn", None)
-                        if model_turn is not None:
-                            for part in (getattr(model_turn, "parts", None) or []):
-                                # Text part
-                                text = getattr(part, "text", None)
-                                if text:
-                                    await send(TextDeltaMessage(delta=text))
-                                    current_text += text
+                        text = getattr(server_content, "text", None)
+                        if text:
+                            await send(TextDeltaMessage(delta=text))
+                            current_text += text
 
-                                # Audio part — inline_data carries raw PCM bytes
-                                inline = getattr(part, "inline_data", None)
-                                if inline is not None:
-                                    data = getattr(inline, "data", None)
-                                    if data:
-                                        await send(AudioDeltaMessage(audio=pcm_to_base64(data)))
-
-                        # Turn complete — sent by Gemini after the model finishes speaking
                         if getattr(server_content, "turn_complete", False):
                             if current_text:
                                 await send(TextDoneMessage(full_text=current_text))
                                 current_text = ""
                             await send(AudioDoneMessage())
+
+                    # ── Audio: response.media (SDK ≥ 1.67) ───────────────────
+                    media = getattr(response, "media", None)
+                    if media:
+                        audio_bytes = getattr(media[0], "data", None)
+                        if audio_bytes:
+                            await send(AudioDeltaMessage(audio=pcm_to_base64(audio_bytes)))
 
                     # ── Tool / function call ─────────────────────────────────
                     tool_call = getattr(response, "tool_call", None)
