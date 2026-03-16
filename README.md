@@ -47,7 +47,7 @@ flowchart LR
 
 **`scan_meter` is fully local** — a deterministic dactylic hexameter scanner (`backend/meter.py`) handles nucleus extraction, long-by-position rules, backtracking, and synizesis fallback in under 1 ms with `lru_cache`. No LLM call.
 
-See [CLAUDE.md](./CLAUDE.md) for full architecture notes and key file index.
+See [AGENTS.md](./AGENTS.md) for full architecture notes and key file index.
 
 ## Quick Start (Docker Compose)
 
