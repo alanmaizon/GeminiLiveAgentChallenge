@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+env/
+venv/
+.venv/
+
+# Environment files
+*.env
+!*.env.example
+!.env.local.example
+
+# Node
+node_modules/
+.next/
+out/
+.vercel/
+*.local
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker volumes
+.dockerignore
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Deployment secrets
+deploy/.env*
