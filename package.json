@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "test:e2e": "node tests/e2e/demo.mjs",
+    "test:e2e:headless": "LOGOS_HEADLESS=true node tests/e2e/demo.mjs"
+  },
   "dependencies": {
     "playwright": "^1.58.2"
   }

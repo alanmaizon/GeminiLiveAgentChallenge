@@ -45,3 +45,7 @@ htmlcov/
 
 # Deployment secrets
 deploy/.env*
+
+# E2E test output (videos, screenshots, diagnostics — never commit)
+tests/e2e/output/
+demo-output/
