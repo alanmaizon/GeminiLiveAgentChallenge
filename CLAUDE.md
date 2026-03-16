@@ -74,4 +74,4 @@ Fonts: `greek` class = EB Garamond (polytonic), `inspector-mono` class = JetBrai
 
 ## Gemini Live API Notes
 
-The backend uses `google-genai` (not `google-generativeai`). Search for `# GEMINI_LIVE:` comments in `gemini_client.py` for places where the exact SDK API may need adjustment based on the installed version. The Live model is `gemini-2.0-flash-live-001`.
+The backend uses `google-genai` (not `google-generativeai`). Search for `# GEMINI_LIVE:` comments in `gemini_client.py` for places where the exact SDK API may need adjustment based on the installed version. The Live model is `gemini-live-2.5-flash-native-audio` (GA, recommended). The preview alternative is `gemini-live-2.5-flash-preview-native-audio-09-2025`.

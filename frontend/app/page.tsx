@@ -22,57 +22,61 @@ export default function ConsolePage() {
     sendText,
     sendImage,
     interrupt,
+    loadPassage,
+    clearPassage,
+    setDifficulty,
     clearInspector,
     audio,
     camera,
   } = useSession()
 
-  const isLive = state.connectionState === "live"
-  const isConnecting = state.connectionState === "connecting"
-  const isEnded = state.connectionState === "ended"
-  const hasSession = isLive || isConnecting || isEnded || state.transcript.length > 0
+  const hasSession =
+    state.connectionState !== "idle" || state.transcript.length > 0
 
   return (
     <div
       className="flex flex-col h-screen"
       style={{ background: "var(--bg)", color: "var(--text-primary)" }}
     >
-      {/* Top bar */}
       <TopBar
         connectionState={state.connectionState}
         elapsedSeconds={state.elapsedSeconds}
+        difficultyLevel={state.difficultyLevel}
         theme={theme}
         onToggleTheme={toggleTheme}
         onToggleInspector={() => setInspectorOpen((v) => !v)}
         inspectorOpen={inspectorOpen}
       />
 
-      {/* Main content area */}
       <main className="flex-1 overflow-hidden relative">
         <div className="h-full max-w-3xl mx-auto px-4 flex flex-col">
           {!hasSession ? (
             <WelcomeView
               systemInstruction={systemInstruction}
               onSystemInstructionChange={setSystemInstruction}
+              difficultyLevel={state.difficultyLevel}
+              onDifficultyChange={setDifficulty}
+              onLoadPassage={(text) => loadPassage(text)}
             />
           ) : (
             <TranscriptView
               messages={state.transcript}
               isStreaming={state.isAssistantStreaming}
               connectionState={state.connectionState}
+              pinnedPassage={state.pinnedPassage}
+              onClearPassage={clearPassage}
             />
           )}
         </div>
       </main>
 
-      {/* Composer bar */}
       <ComposerBar
         connectionState={state.connectionState}
         isAudioCapturing={audio.isCapturing}
         isCameraActive={camera.isActive}
         audioError={audio.error}
         cameraError={camera.error}
-        onStartSession={() => startSession(systemInstruction)}
+        onStartSession={() => startSession(systemInstruction, state.difficultyLevel)}
         onEndSession={endSession}
         onSendText={sendText}
         onToggleMic={audio.toggle}
@@ -84,7 +88,6 @@ export default function ConsolePage() {
         onInterrupt={interrupt}
       />
 
-      {/* Inspector drawer */}
       <InspectorDrawer
         open={inspectorOpen}
         onClose={() => setInspectorOpen(false)}

@@ -1,15 +1,16 @@
 "use client"
 
 import { Moon, Sun, Terminal, ChevronLeft } from "lucide-react"
-import type { ConnectionState } from "@/lib/types"
+import type { ConnectionState, DifficultyLevel } from "@/lib/types"
 import type { Theme } from "@/hooks/useTheme"
-import { APP_NAME, APP_NAME_GREEK } from "@/lib/constants"
+import { APP_NAME, APP_NAME_GREEK, DIFFICULTY_LABELS, DIFFICULTY_COLORS } from "@/lib/constants"
 import { formatElapsed } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 
 interface TopBarProps {
   connectionState: ConnectionState
   elapsedSeconds: number
+  difficultyLevel: DifficultyLevel
   theme: Theme
   onToggleTheme: () => void
   onToggleInspector: () => void
@@ -27,6 +28,7 @@ const STATE_LABEL: Record<ConnectionState, string> = {
 export function TopBar({
   connectionState,
   elapsedSeconds,
+  difficultyLevel,
   theme,
   onToggleTheme,
   onToggleInspector,
@@ -88,6 +90,17 @@ export function TopBar({
             {formatElapsed(elapsedSeconds)}
           </span>
         )}
+        {/* Feature E: difficulty badge */}
+        <span
+          className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+          style={{
+            background: `color-mix(in srgb, ${DIFFICULTY_COLORS[difficultyLevel]} 15%, transparent)`,
+            color: DIFFICULTY_COLORS[difficultyLevel],
+            border: `1px solid color-mix(in srgb, ${DIFFICULTY_COLORS[difficultyLevel]} 30%, transparent)`,
+          }}
+        >
+          {DIFFICULTY_LABELS[difficultyLevel]}
+        </span>
       </div>
 
       {/* Right: inspector toggle + theme toggle */}

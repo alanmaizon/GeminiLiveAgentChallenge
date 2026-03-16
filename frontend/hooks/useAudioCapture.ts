@@ -14,17 +14,18 @@ export function useAudioCapture({ onAudioChunk }: UseAudioCaptureOptions) {
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null)
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const onChunkRef = useRef(onAudioChunk)
   onChunkRef.current = onAudioChunk
 
   const stop = useCallback(() => {
-    processorRef.current?.disconnect()
+    workletNodeRef.current?.port.close()
+    workletNodeRef.current?.disconnect()
     sourceRef.current?.disconnect()
     streamRef.current?.getTracks().forEach((t) => t.stop())
     audioContextRef.current?.close()
-    processorRef.current = null
+    workletNodeRef.current = null
     sourceRef.current = null
     streamRef.current = null
     audioContextRef.current = null
@@ -37,32 +38,31 @@ export function useAudioCapture({ onAudioChunk }: UseAudioCaptureOptions) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
 
-      // GEMINI_LIVE: Gemini Live expects PCM 16-bit 16kHz mono
-      // AudioContext resamples from device rate to target rate
+      // AudioContext resamples the device's native rate to AUDIO_SAMPLE_RATE (16 kHz).
+      // Gemini Live expects PCM 16-bit 16 kHz mono.
       const ctx = new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE })
       audioContextRef.current = ctx
+
+      // Load the AudioWorkletProcessor from /public/pcm-processor.js.
+      // The worklet runs off the main thread, so heavy React renders won't
+      // cause audio frame drops.
+      await ctx.audioWorklet.addModule("/pcm-processor.js")
 
       const source = ctx.createMediaStreamSource(stream)
       sourceRef.current = source
 
-      // ScriptProcessorNode for raw PCM access (deprecated but widely supported)
-      // TODO: migrate to AudioWorklet for production
-      const bufferSize = 4096
-      const processor = ctx.createScriptProcessor(bufferSize, 1, 1)
-      processorRef.current = processor
+      const workletNode = new AudioWorkletNode(ctx, "pcm-processor")
+      workletNodeRef.current = workletNode
 
-      processor.onaudioprocess = (e: AudioProcessingEvent) => {
-        const float32 = e.inputBuffer.getChannelData(0)
-        // Convert Float32 [-1,1] → Int16 PCM
-        const int16 = new Int16Array(float32.length)
-        for (let i = 0; i < float32.length; i++) {
-          int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32767))
-        }
-        onChunkRef.current(arrayBufferToBase64(int16.buffer))
+      // The processor posts Int16 ArrayBuffers via MessagePort.
+      workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+        onChunkRef.current(arrayBufferToBase64(event.data))
       }
 
-      source.connect(processor)
-      processor.connect(ctx.destination)
+      source.connect(workletNode)
+      // Connect to destination to keep the audio graph active (silent output).
+      workletNode.connect(ctx.destination)
+
       setIsCapturing(true)
     } catch (err) {
       const msg =
@@ -81,7 +81,6 @@ export function useAudioCapture({ onAudioChunk }: UseAudioCaptureOptions) {
     }
   }, [isCapturing, start, stop])
 
-  // Cleanup on unmount
   useEffect(() => () => stop(), [stop])
 
   return { isCapturing, error, start, stop, toggle }

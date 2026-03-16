@@ -103,6 +103,10 @@ export interface ToolCallRecord {
   timestamp: Date
 }
 
+// ── Feature E: Difficulty ─────────────────────────────────────────────────────
+
+export type DifficultyLevel = "beginner" | "intermediate" | "advanced"
+
 // ── Session state ─────────────────────────────────────────────────────────────
 
 export interface SessionState {
@@ -114,4 +118,8 @@ export interface SessionState {
   isAssistantStreaming: boolean
   elapsedSeconds: number
   tokenCount: number
+  /** Feature D: text of the currently pinned passage for close reading */
+  pinnedPassage: string | null
+  /** Feature E: current learner difficulty level */
+  difficultyLevel: DifficultyLevel
 }

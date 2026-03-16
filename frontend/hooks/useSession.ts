@@ -6,12 +6,14 @@ import { useAudioCapture } from "./useAudioCapture"
 import { useCamera } from "./useCamera"
 import type {
   ConnectionState,
+  DifficultyLevel,
   InspectorEvent,
   SessionState,
   ToolCallRecord,
   TranscriptMessage,
   ServerMessage,
 } from "@/lib/types"
+import { DIFFICULTY_INSTRUCTIONS } from "@/lib/constants"
 import { generateId } from "@/lib/utils"
 
 const INITIAL_STATE: SessionState = {
@@ -23,6 +25,8 @@ const INITIAL_STATE: SessionState = {
   isAssistantStreaming: false,
   elapsedSeconds: 0,
   tokenCount: 0,
+  pinnedPassage: null,
+  difficultyLevel: "intermediate",
 }
 
 export function useSession() {
@@ -31,50 +35,51 @@ export function useSession() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const systemInstructionRef = useRef<string>("")
 
-  // ── Audio playback ──────────────────────────────────────────────────────
+  // ── Gapless audio playback ───────────────────────────────────────────────
+  // Each incoming PCM chunk is scheduled precisely at the end of the previous
+  // one using AudioContext's internal clock, eliminating clicks/pops.
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const audioQueueRef = useRef<ArrayBuffer[]>([])
-  const isPlayingRef = useRef(false)
+  const nextStartTimeRef = useRef(0)
 
-  const enqueueAudio = useCallback((base64Pcm: string) => {
-    // GEMINI_LIVE: wire actual PCM→AudioContext playback
+  const scheduleAudioChunk = useCallback((base64Pcm: string) => {
     try {
       const binary = atob(base64Pcm)
       const bytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-      audioQueueRef.current.push(bytes.buffer)
-      if (!isPlayingRef.current) drainAudioQueue()
+
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioContext({ sampleRate: 24000 })
+      }
+      const ctx = audioCtxRef.current
+
+      const int16 = new Int16Array(bytes.buffer)
+      const float32 = new Float32Array(int16.length)
+      for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768
+
+      const audioBuffer = ctx.createBuffer(1, float32.length, ctx.sampleRate)
+      audioBuffer.copyToChannel(float32, 0)
+
+      const source = ctx.createBufferSource()
+      source.buffer = audioBuffer
+      source.connect(ctx.destination)
+
+      // Schedule this chunk to start exactly when the previous one ends.
+      // Math.max guards against scheduling in the past if there's a gap.
+      const startTime = Math.max(ctx.currentTime, nextStartTimeRef.current)
+      source.start(startTime)
+      nextStartTimeRef.current = startTime + audioBuffer.duration
     } catch {
-      // Ignore decode errors
+      // Ignore decode / context errors
     }
   }, [])
 
-  const drainAudioQueue = useCallback(() => {
-    if (audioQueueRef.current.length === 0) {
-      isPlayingRef.current = false
-      return
-    }
-    isPlayingRef.current = true
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new AudioContext({ sampleRate: 24000 })
-    }
-    const ctx = audioCtxRef.current
-    const buffer = audioQueueRef.current.shift()!
-    const int16 = new Int16Array(buffer)
-    const float32 = new Float32Array(int16.length)
-    for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768
-
-    const audioBuffer = ctx.createBuffer(1, float32.length, ctx.sampleRate)
-    audioBuffer.copyToChannel(float32, 0)
-
-    const source = ctx.createBufferSource()
-    source.buffer = audioBuffer
-    source.connect(ctx.destination)
-    source.onended = drainAudioQueue
-    source.start()
+  const stopAudio = useCallback(() => {
+    audioCtxRef.current?.close()
+    audioCtxRef.current = null
+    nextStartTimeRef.current = 0
   }, [])
 
-  // ── WebSocket ──────────────────────────────────────────────────────────
+  // ── Inspector ─────────────────────────────────────────────────────────────
 
   const addInspectorEvent = useCallback((event: string, data?: unknown) => {
     const entry: InspectorEvent = {
@@ -83,11 +88,10 @@ export function useSession() {
       event,
       data,
     }
-    setState((s) => ({
-      ...s,
-      inspectorEvents: [...s.inspectorEvents, entry],
-    }))
+    setState((s) => ({ ...s, inspectorEvents: [...s.inspectorEvents, entry] }))
   }, [])
+
+  // ── WebSocket message handler ─────────────────────────────────────────────
 
   const handleMessage = useCallback(
     (msg: ServerMessage) => {
@@ -122,7 +126,6 @@ export function useSession() {
                 ),
               }
             }
-            // Start new message
             const newId = generateId()
             streamingMessageIdRef.current = newId
             const newMsg: TranscriptMessage = {
@@ -156,7 +159,7 @@ export function useSession() {
           break
 
         case "output.audio.delta":
-          enqueueAudio(msg.audio)
+          scheduleAudioChunk(msg.audio)
           break
 
         case "tool.call": {
@@ -177,7 +180,6 @@ export function useSession() {
             toolCalls: s.toolCalls.map((tc) =>
               tc.callId === msg.call_id ? { ...tc, result: msg.result } : tc
             ),
-            // Attach parse result to the current streaming message
             transcript: s.transcript.map((m) =>
               m.id === streamingMessageIdRef.current
                 ? { ...m, parseResult: msg.result as TranscriptMessage["parseResult"] }
@@ -193,11 +195,10 @@ export function useSession() {
           break
 
         case "log":
-          // Already captured by addInspectorEvent above
           break
       }
     },
-    [enqueueAudio, addInspectorEvent] // eslint-disable-line react-hooks/exhaustive-deps
+    [scheduleAudioChunk, addInspectorEvent] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const { status: wsStatus, connect, disconnect, send } = useWebSocket({
@@ -205,7 +206,7 @@ export function useSession() {
     autoReconnect: false,
   })
 
-  // ── Timer ───────────────────────────────────────────────────────────────
+  // ── Timer ─────────────────────────────────────────────────────────────────
   const startTimer = () => {
     if (timerRef.current) return
     timerRef.current = setInterval(() => {
@@ -221,7 +222,7 @@ export function useSession() {
 
   useEffect(() => () => stopTimer(), [])
 
-  // ── Transcript helpers ──────────────────────────────────────────────────
+  // ── Transcript helpers ────────────────────────────────────────────────────
   const addTranscriptMessage = (
     role: TranscriptMessage["role"],
     content: string,
@@ -236,15 +237,20 @@ export function useSession() {
     }))
   }
 
-  // ── Public actions ──────────────────────────────────────────────────────
+  // ── Public actions ────────────────────────────────────────────────────────
 
   const startSession = useCallback(
-    (systemInstruction: string) => {
-      systemInstructionRef.current = systemInstruction
-      setState({ ...INITIAL_STATE, connectionState: "connecting" })
+    (systemInstruction: string, difficulty: DifficultyLevel) => {
+      // Append difficulty modifier to the system instruction
+      const fullInstruction = systemInstruction + DIFFICULTY_INSTRUCTIONS[difficulty]
+      systemInstructionRef.current = fullInstruction
+      setState((s) => ({
+        ...INITIAL_STATE,
+        connectionState: "connecting",
+        difficultyLevel: difficulty,
+        pinnedPassage: s.pinnedPassage, // preserve any pre-loaded passage
+      }))
       connect()
-      // After WS open, send session.start
-      // We rely on the wsStatus → "open" transition below
     },
     [connect]
   )
@@ -262,9 +268,10 @@ export function useSession() {
   const endSession = useCallback(() => {
     send({ type: "session.end" })
     disconnect()
+    stopAudio()
     stopTimer()
     setState((s) => ({ ...s, connectionState: "ended" }))
-  }, [send, disconnect])
+  }, [send, disconnect, stopAudio])
 
   const sendText = useCallback(
     (text: string) => {
@@ -287,7 +294,7 @@ export function useSession() {
 
   const interrupt = useCallback(() => {
     send({ type: "input.interrupt" })
-    // Mark current streaming message as interrupted
+    stopAudio() // Stop any currently playing audio immediately
     setState((s) => ({
       ...s,
       isAssistantStreaming: false,
@@ -298,7 +305,35 @@ export function useSession() {
       ),
     }))
     streamingMessageIdRef.current = null
-  }, [send])
+  }, [send, stopAudio])
+
+  // ── Feature D: Contextual Passage Mode ───────────────────────────────────
+  const loadPassage = useCallback(
+    (text: string) => {
+      setState((s) => ({ ...s, pinnedPassage: text }))
+      if (state.connectionState === "live") {
+        // Send the passage to the model as context
+        send({
+          type: "input.text",
+          text: `[Passage loaded for close reading]\n\n${text}\n\nPlease acknowledge this passage and stand by for questions about it.`,
+        })
+        addTranscriptMessage(
+          "user",
+          `[Passage loaded for close reading]\n\n${text}`
+        )
+      }
+    },
+    [state.connectionState, send] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  const clearPassage = useCallback(() => {
+    setState((s) => ({ ...s, pinnedPassage: null }))
+  }, [])
+
+  // ── Feature E: Adaptive Difficulty ───────────────────────────────────────
+  const setDifficulty = useCallback((level: DifficultyLevel) => {
+    setState((s) => ({ ...s, difficultyLevel: level }))
+  }, [])
 
   const clearInspector = useCallback(() => {
     setState((s) => ({ ...s, inspectorEvents: [], toolCalls: [] }))
@@ -321,6 +356,9 @@ export function useSession() {
     sendText,
     sendImage,
     interrupt,
+    loadPassage,
+    clearPassage,
+    setDifficulty,
     clearInspector,
     audio,
     camera,

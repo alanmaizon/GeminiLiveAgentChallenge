@@ -59,7 +59,7 @@ uvicorn main:app --reload --port 8080
 cd frontend
 npm install
 cp .env.example .env.local   # edit NEXT_PUBLIC_WS_URL if needed
-npm run dev
+uvicorn main:app --reload --port 8080
 ```
 
 ## Environment Variables
@@ -69,7 +69,7 @@ npm run dev
 | Variable | Default | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | — | Google AI Studio or Vertex AI key |
-| `GEMINI_MODEL` | `gemini-2.0-flash-live-001` | Gemini Live model ID |
+| `GEMINI_MODEL` | `gemini-live-2.5-flash-native-audio` | Gemini Live model ID |
 | `MOCK_MODE` | `false` | Enable mock mode (auto-enabled if no API key) |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS allowed origins |
 | `GCP_PROJECT_ID` | — | Google Cloud project (for Cloud Run) |
@@ -100,12 +100,12 @@ bash deploy/cloud-run-frontend.sh
 - ✅ Feature A — Philological Parse Mode (`parse_greek` tool + ParseCard UI)
 - ✅ Feature B — Visual Text Recognition (camera capture → Gemini multimodal)
 - ✅ Feature C — Pronunciation guidance (IPA in parse results and responses)
-- ⬜ Feature D — Contextual Passage Mode (TODO: pinned passage card)
-- ⬜ Feature E — Adaptive Difficulty (TODO: level badge)
+- ✅ Feature D — Contextual Passage Mode (pinned passage card above transcript, passage sent as context on session start)
+- ✅ Feature E — Adaptive Difficulty (3-level selector in WelcomeView, level badge in TopBar, appended to system instruction)
 
 ## Tech Stack
 
 - **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Lucide React
 - **Backend:** Python FastAPI, websockets, google-genai SDK
-- **AI:** Gemini Live API (gemini-2.0-flash-live-001)
+- **AI:** Gemini Live API (gemini-live-2.5-flash-native-audio)
 - **Deploy:** Google Cloud Run (backend + frontend)

@@ -38,6 +38,33 @@ TOOLS AVAILABLE:
 
 export const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000]
 
+// ── Feature E: Difficulty level system instruction addendums ──────────────────
+import type { DifficultyLevel } from "./types"
+
+export const DIFFICULTY_INSTRUCTIONS: Record<DifficultyLevel, string> = {
+  beginner:
+    "\n\nUSER LEVEL: Beginner. Use simple English throughout. Translate all Greek immediately. " +
+    "Provide full morphology tables unprompted. Add encouragement. Avoid scholarly jargon.",
+  intermediate:
+    "\n\nUSER LEVEL: Intermediate. Balance English explanation with Greek. " +
+    "Assume basic grammar knowledge. Provide partial translations and prompt the user to complete them.",
+  advanced:
+    "\n\nUSER LEVEL: Advanced. Engage as a scholarly peer. Use Greek directly in responses. " +
+    "Assume solid grammar and vocabulary. Include scholarly references, textual variants, and nuanced analysis.",
+}
+
+export const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
+  beginner: "Beginner",
+  intermediate: "Intermediate",
+  advanced: "Advanced",
+}
+
+export const DIFFICULTY_COLORS: Record<DifficultyLevel, string> = {
+  beginner: "#0f9d58",
+  intermediate: "#b8860b",
+  advanced: "#ea4335",
+}
+
 export const AUDIO_SAMPLE_RATE = 16000
 export const AUDIO_CHANNELS = 1
 export const AUDIO_BITS_PER_SAMPLE = 16

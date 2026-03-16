@@ -3,11 +3,16 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
+    # Google AI Studio (API key auth)
     gemini_api_key: Optional[str] = None
-    gemini_model: str = "gemini-2.0-flash-live-001"
+
+    # Vertex AI (ADC auth) — set gcp_project_id to enable Vertex AI mode
+    gcp_project_id: Optional[str] = None
+    gcp_region: str = "us-central1"
+
+    gemini_model: str = "gemini-live-2.5-flash-native-audio"
     mock_mode: bool = False
     allowed_origins: str = "http://localhost:3000"
-    gcp_project_id: Optional[str] = None
 
     class Config:
         env_file = ".env"
@@ -16,5 +21,7 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Use mock mode if explicitly set or no API key is available
-USE_MOCK = settings.mock_mode or not settings.gemini_api_key
+# Priority: AI Studio (GEMINI_API_KEY) > Vertex AI (GCP_PROJECT_ID) > Mock
+# Vertex AI is only used when no API key is available.
+USE_VERTEX_AI = bool(settings.gcp_project_id) and not bool(settings.gemini_api_key)
+USE_MOCK = settings.mock_mode or (not settings.gemini_api_key and not USE_VERTEX_AI)

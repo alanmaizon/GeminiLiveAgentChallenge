@@ -233,15 +233,16 @@ async def execute_tool_live(
         if gemini_client is None:
             return execute_tool_mock(tool_name, args)
 
+        from google.genai import types as genai_types  # type: ignore[import]
+
         response = gemini_client.models.generate_content(
             model="gemini-2.0-flash-001",
             contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
         )
-        text = response.text.strip()
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-        return json.loads(text)
+        return json.loads(response.text)
 
     except Exception:
         return execute_tool_mock(tool_name, args)

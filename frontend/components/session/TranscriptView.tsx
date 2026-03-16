@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { ConnectionState, TranscriptMessage } from "@/lib/types"
 import { MessageBubble } from "./MessageBubble"
+import { PinnedPassageCard } from "./PinnedPassageCard"
 import { StreamingIndicator } from "./StreamingIndicator"
 import { cn } from "@/lib/utils"
 
@@ -10,9 +11,17 @@ interface TranscriptViewProps {
   messages: TranscriptMessage[]
   isStreaming: boolean
   connectionState: ConnectionState
+  pinnedPassage?: string | null
+  onClearPassage?: () => void
 }
 
-export function TranscriptView({ messages, isStreaming, connectionState }: TranscriptViewProps) {
+export function TranscriptView({
+  messages,
+  isStreaming,
+  connectionState,
+  pinnedPassage,
+  onClearPassage,
+}: TranscriptViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -36,6 +45,13 @@ export function TranscriptView({ messages, isStreaming, connectionState }: Trans
   const isEnded = connectionState === "ended"
 
   return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Feature D: Pinned passage card (always visible above scroll area) */}
+      {pinnedPassage && (
+        <div className="pt-3 shrink-0">
+          <PinnedPassageCard text={pinnedPassage} onClear={onClearPassage ?? (() => {})} />
+        </div>
+      )}
     <div
       ref={containerRef}
       onScroll={handleScroll}
@@ -85,6 +101,7 @@ export function TranscriptView({ messages, isStreaming, connectionState }: Trans
 
       {/* Scroll anchor */}
       <div ref={bottomRef} />
+    </div>
     </div>
   )
 }

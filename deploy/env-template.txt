@@ -1,6 +1,6 @@
 # ── Backend environment variables ────────────────────────────────────────────
 GEMINI_API_KEY=          # Google AI Studio or Vertex AI API key
-GEMINI_MODEL=gemini-2.0-flash-live-001   # or latest available live model
+GEMINI_MODEL=gemini-live-2.5-flash-native-audio  # or latest available live model
 MOCK_MODE=false          # Set true for demo without API key
 ALLOWED_ORIGINS=https://your-frontend-domain.run.app
 GCP_PROJECT_ID=          # Google Cloud project ID
