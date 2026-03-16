@@ -79,22 +79,70 @@ npm run dev   # http://localhost:3000
 
 ## Testing
 
-```bash
-# Backend (pytest) — 66 tests
-cd backend && python -m pytest tests/ -v
+### Unit tests (no API key needed)
 
-# Frontend (Vitest) — 16 tests
-cd frontend && npm test
+```bash
+# Backend — 66 tests (pytest)
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest tests/ -v
 ```
 
-Test suites:
+```bash
+# Frontend — 16 tests (Vitest)
+cd frontend
+npm install
+npm test
+```
 
-| Suite | File | Tests |
-|---|---|---|
-| Transcript sanitization | `backend/tests/test_sanitize.py` | 20 |
-| Spoken-safe tool split | `backend/tests/test_spoken_safe.py` | 18 |
-| Hexameter scanner | `backend/tests/test_meter.py` | 28 |
-| Frontend utils | `frontend/lib/__tests__/utils.test.ts` | 16 |
+| Suite | File | Tests | What it covers |
+|---|---|---|---|
+| Transcript sanitization | `backend/tests/test_sanitize.py` | 20 | Control-token stripping, transliteration parens removal |
+| Spoken-safe tool split | `backend/tests/test_spoken_safe.py` | 18 | Visual-only fields stripped from model response |
+| Hexameter scanner | `backend/tests/test_meter.py` | 28 | Dactylic hexameter scansion, spondee detection, backtracking |
+| Frontend utils | `frontend/lib/__tests__/utils.test.ts` | 16 | `formatTimestamp`, `cn`, type guards |
+
+### End-to-end demo test (Playwright)
+
+The e2e suite drives a real browser through all three tool flows and records a video. The Aesop fable image used in the image-upload session is committed at `tests/e2e/fixtures/`.
+
+**Prerequisites:** Node.js 18+, the app running locally (see Quick Start).
+
+```bash
+# Install Playwright + browser
+npm install
+npx playwright install chromium
+
+# Start the app (separate terminal)
+docker compose up --build
+# — or —
+cd backend && uvicorn main:app --port 8080 &
+cd frontend && npm run dev &
+
+# Run the demo (headed, ~4 minutes)
+npm run test:e2e
+
+# Run headless (CI-friendly)
+npm run test:e2e:headless
+```
+
+The runner exercises:
+1. **Session 1 (Beginner)** — `parse_greek` tool → ParseCard appears in transcript
+2. **Session 2 (Intermediate)** — Aesop JPEG uploaded → `lookup_lexicon` → LexiconCard
+3. **Session 3 (Advanced)** — Iliad hexameter → `scan_meter` → ScansionCard
+
+All three tool assertions are hard-fails; the script exits non-zero if a card does not appear.
+
+Output (video + diagnostic screenshots) is written to `tests/e2e/output/` (gitignored).
+
+**Mock mode** (no API key): set `MOCK_MODE=true` in `backend/.env` — the frontend is indistinguishable from a live session and all tool cards render from hardcoded examples.
+
+```bash
+# Full test matrix with mock mode
+MOCK_MODE=true docker compose up --build &
+npm run test:e2e:headless
+```
 
 ## Environment Variables
 
