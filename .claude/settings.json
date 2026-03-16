@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(GCP_PROJECT_ID=vista-ai-488623 GCP_REGION=us-central1 bash deploy/cloud-run-backend.sh)",
+      "Bash(GCP_PROJECT_ID=vista-ai-488623 GCP_REGION=us-central1 BACKEND_URL=https://logos-backend-en2ftwmt7q-uc.a.run.app bash deploy/cloud-run-frontend.sh)"
+    ]
+  }
+}
