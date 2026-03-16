@@ -74,10 +74,20 @@ export function useAudioCapture({ onAudioChunk }: UseAudioCaptureOptions) {
   }, [])
 
   const toggle = useCallback(async () => {
+    console.debug("[mic] toggle — isCapturing=%s", isCapturing)
     if (isCapturing) {
       stop()
+      console.debug("[mic] stopped")
     } else {
       await start()
+      // isCapturing state reflects the result after start() resolves
+      const track = streamRef.current?.getAudioTracks()[0]
+      console.debug(
+        "[mic] started — track=%s enabled=%s muted=%s",
+        track?.label ?? "none",
+        track?.enabled ?? "n/a",
+        track?.muted ?? "n/a",
+      )
     }
   }, [isCapturing, start, stop])
 

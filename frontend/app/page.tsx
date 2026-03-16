@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useSession } from "@/hooks/useSession"
 import { useTheme } from "@/hooks/useTheme"
 import { TopBar } from "@/components/layout/TopBar"
@@ -10,10 +10,104 @@ import { WelcomeView } from "@/components/welcome/WelcomeView"
 import { TranscriptView } from "@/components/session/TranscriptView"
 import { DEFAULT_SYSTEM_INSTRUCTION } from "@/lib/constants"
 
+// ── Live camera preview strip ────────────────────────────────────────────────
+// Uses its own local videoRef so it never competes with useCamera's videoRef
+// (which is reserved for captureFrame / InspectorDrawer).
+// The same MediaStream is shared to both consumers; MediaStream is multi-consumer safe.
+function LiveCameraPreview({
+  getStream,
+  lastCapture,
+  onDismissCapture,
+}: {
+  getStream: () => MediaStream | null
+  lastCapture: string | null
+  onDismissCapture: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const video = videoRef.current
+    const stream = getStream()
+    if (!video || !stream) {
+      console.debug("[preview] mount — stream not yet available")
+      return
+    }
+    video.srcObject = stream
+    video.play().catch(() => {})
+
+    const onMeta = () =>
+      console.debug("[preview] ready — %dx%d", video.videoWidth, video.videoHeight)
+    video.addEventListener("loadedmetadata", onMeta)
+    return () => video.removeEventListener("loadedmetadata", onMeta)
+    // getStream is stable (useCallback with no deps) — safe to omit from dep array
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <div
+      className="shrink-0"
+      style={{ borderTop: "1px solid var(--border)", background: "var(--surface)" }}
+    >
+      <div className="max-w-3xl mx-auto px-4 py-2 flex items-end gap-4">
+        {/* Live feed */}
+        <div className="flex flex-col gap-1">
+          <span
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--accent)" }}
+          >
+            ● Live
+          </span>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="rounded-lg object-cover bg-black"
+            style={{ width: 128, height: 96 }}
+          />
+        </div>
+
+        {/* Captured frame — shown immediately after shutter press */}
+        {lastCapture && (
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wider"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Captured
+              </span>
+              <button
+                onClick={onDismissCapture}
+                className="text-xs leading-none"
+                style={{ color: "var(--text-muted)" }}
+                title="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`data:image/jpeg;base64,${lastCapture}`}
+              alt="Captured frame"
+              className="rounded-lg object-cover"
+              style={{ width: 128, height: 96 }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function ConsolePage() {
   const { theme, toggle: toggleTheme } = useTheme()
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [systemInstruction, setSystemInstruction] = useState(DEFAULT_SYSTEM_INSTRUCTION)
+  // Holds the most recent captured frame (base64 JPEG) for the preview strip.
+  // Cleared when user dismisses or camera is toggled off.
+  const [lastCapture, setLastCapture] = useState<string | null>(null)
 
   const {
     state,
@@ -70,6 +164,15 @@ export default function ConsolePage() {
         </div>
       </main>
 
+      {/* Live preview strip — appears between transcript and composer when camera is on */}
+      {camera.isActive && (
+        <LiveCameraPreview
+          getStream={camera.getStream}
+          lastCapture={lastCapture}
+          onDismissCapture={() => setLastCapture(null)}
+        />
+      )}
+
       <ComposerBar
         connectionState={state.connectionState}
         isAudioCapturing={audio.isCapturing}
@@ -80,10 +183,16 @@ export default function ConsolePage() {
         onEndSession={endSession}
         onSendText={sendText}
         onToggleMic={audio.toggle}
-        onToggleCamera={camera.toggle}
+        onToggleCamera={() => {
+          if (camera.isActive) setLastCapture(null) // clear stale capture on stop
+          camera.toggle()
+        }}
         onCaptureAndSendImage={() => {
           const b64 = camera.captureFrame()
-          if (b64) sendImage(b64)
+          if (b64) {
+            setLastCapture(b64)
+            sendImage(b64)
+          }
         }}
         onInterrupt={interrupt}
       />

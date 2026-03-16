@@ -1,0 +1,178 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION:     ${{ vars.GCP_REGION || 'us-central1' }}
+
+jobs:
+  # ── Backend ────────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: Backend → Cloud Run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # needed for Workload Identity Federation
+
+    outputs:
+      backend_url: ${{ steps.url.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build & push backend image
+        run: |
+          IMAGE="gcr.io/$PROJECT_ID/logos-backend"
+          gcloud builds submit --tag "$IMAGE" ./backend
+
+      - name: Deploy backend service
+        run: |
+          IMAGE="gcr.io/$PROJECT_ID/logos-backend"
+
+          ENV_VARS="GEMINI_MODEL=${{ vars.GEMINI_MODEL || 'gemini-live-2.5-flash-native-audio' }}"
+          ENV_VARS="${ENV_VARS},MOCK_MODE=false"
+          ENV_VARS="${ENV_VARS},GCP_PROJECT_ID=$PROJECT_ID"
+          ENV_VARS="${ENV_VARS},GCP_REGION=$REGION"
+          # ALLOWED_ORIGINS patched after frontend deploys (step below)
+          ENV_VARS="${ENV_VARS},ALLOWED_ORIGINS=*"
+
+          gcloud run deploy logos-backend \
+            --image          "$IMAGE" \
+            --region         "$REGION" \
+            --platform       managed \
+            --allow-unauthenticated \
+            --set-env-vars   "$ENV_VARS" \
+            --memory         512Mi \
+            --timeout        300 \
+            --concurrency    80 \
+            --min-instances  0 \
+            --max-instances  10
+
+      - name: Capture backend URL
+        id: url
+        run: |
+          URL=$(gcloud run services describe logos-backend \
+            --region "$REGION" --format "value(status.url)")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Backend URL: $URL"
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  deploy-frontend:
+    name: Frontend → Cloud Run
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      frontend_url: ${{ steps.url.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Derive WebSocket URL
+        id: ws
+        run: |
+          BACKEND_URL="${{ needs.deploy-backend.outputs.backend_url }}"
+          WS_URL="${BACKEND_URL/https:\/\//wss://}/ws"
+          echo "ws_url=$WS_URL" >> "$GITHUB_OUTPUT"
+          echo "WS URL: $WS_URL"
+
+      - name: Build & push frontend image (WS URL baked in)
+        run: |
+          IMAGE="gcr.io/$PROJECT_ID/logos-frontend"
+          gcloud builds submit \
+            --config frontend/cloudbuild.yaml \
+            --substitutions "_IMAGE=$IMAGE,_WS_URL=${{ steps.ws.outputs.ws_url }}" \
+            ./frontend
+
+      - name: Deploy frontend service
+        run: |
+          IMAGE="gcr.io/$PROJECT_ID/logos-frontend"
+          gcloud run deploy logos-frontend \
+            --image          "$IMAGE" \
+            --region         "$REGION" \
+            --platform       managed \
+            --allow-unauthenticated \
+            --set-env-vars   "NEXT_PUBLIC_WS_URL=${{ steps.ws.outputs.ws_url }},NEXT_PUBLIC_APP_NAME=Logos" \
+            --memory         256Mi \
+            --timeout        60 \
+            --concurrency    80
+
+      - name: Capture frontend URL
+        id: url
+        run: |
+          URL=$(gcloud run services describe logos-frontend \
+            --region "$REGION" --format "value(status.url)")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Frontend URL: $URL"
+
+  # ── Patch CORS ─────────────────────────────────────────────────────────────
+  patch-cors:
+    name: Patch ALLOWED_ORIGINS
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Restrict CORS to frontend origin
+        run: |
+          FRONTEND_URL="${{ needs.deploy-frontend.outputs.frontend_url }}"
+          gcloud run services update logos-backend \
+            --region "$REGION" \
+            --update-env-vars "ALLOWED_ORIGINS=$FRONTEND_URL" \
+            --quiet
+          echo "ALLOWED_ORIGINS set to $FRONTEND_URL"
+
+  # ── Summary ────────────────────────────────────────────────────────────────
+  summary:
+    name: Deployment summary
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend, patch-cors]
+    if: always()
+
+    steps:
+      - name: Print URLs
+        run: |
+          echo "## Deployment complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service  | URL |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Frontend | ${{ needs.deploy-frontend.outputs.frontend_url }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Backend  | ${{ needs.deploy-backend.outputs.backend_url }} |" >> "$GITHUB_STEP_SUMMARY"

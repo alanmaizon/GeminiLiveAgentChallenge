@@ -1,15 +1,101 @@
 "use client"
 
 import { useState } from "react"
+import type { ReactNode } from "react"
 import { Copy, Check } from "lucide-react"
 import type { TranscriptMessage } from "@/lib/types"
-import { formatTimestamp } from "@/lib/utils"
+
+// ── Minimal markdown renderer (no external deps) ─────────────────────────────
+// Handles the subset Gemini actually emits: **bold**, *italic*, `code`,
+// # headings (1-3 levels), • / – / - bullet lists, blank-line paragraphs.
+// All text is inserted as React children — no dangerouslySetInnerHTML.
+
+function renderInline(text: string): ReactNode[] {
+  // Matches **bold**, *italic*, `code` — in that priority order.
+  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  let m: RegExpExecArray | null
+  let k = 0
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > cursor) nodes.push(text.slice(cursor, m.index))
+    if (m[2] !== undefined)      nodes.push(<strong key={k++}>{m[2]}</strong>)
+    else if (m[3] !== undefined) nodes.push(<em key={k++}>{m[3]}</em>)
+    else if (m[4] !== undefined) nodes.push(
+      <code key={k++} className="font-mono text-xs px-1 rounded"
+        style={{ background: "rgba(0,0,0,.08)" }}>{m[4]}</code>
+    )
+    cursor = m.index + m[0].length
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor))
+  return nodes
+}
+
+function MarkdownText({ text }: { text: string }) {
+  // Split on blank lines → blocks (paragraphs / lists / headings)
+  const blocks = text.split(/\n{2,}/)
+  return (
+    <div className="space-y-2">
+      {blocks.map((block, bi) => {
+        const trimmed = block.trim()
+        if (!trimmed) return null
+
+        // Heading: # / ## / ###
+        const hm = trimmed.match(/^(#{1,3})\s+(.+)/)
+        if (hm) {
+          const depth = hm[1].length
+          const cls = depth === 1
+            ? "text-base font-semibold mt-1"
+            : depth === 2
+              ? "text-sm font-semibold mt-0.5"
+              : "text-sm font-medium mt-0.5"
+          return <p key={bi} className={cls}>{renderInline(hm[2])}</p>
+        }
+
+        // Bullet list: lines starting with •, –, -, or *
+        const lines = trimmed.split("\n")
+        const bulletRe = /^[•\-–*]\s+/
+        if (lines.every(l => bulletRe.test(l.trim()))) {
+          return (
+            <ul key={bi} className="list-disc list-inside space-y-0.5 pl-1">
+              {lines.map((l, li) => (
+                <li key={li}>{renderInline(l.trim().replace(bulletRe, ""))}</li>
+              ))}
+            </ul>
+          )
+        }
+
+        // Numbered list: lines starting with "1. " etc.
+        const numRe = /^\d+\.\s+/
+        if (lines.every(l => numRe.test(l.trim()))) {
+          return (
+            <ol key={bi} className="list-decimal list-inside space-y-0.5 pl-1">
+              {lines.map((l, li) => (
+                <li key={li}>{renderInline(l.trim().replace(numRe, ""))}</li>
+              ))}
+            </ol>
+          )
+        }
+
+        // Plain paragraph — preserve single newlines as <br>
+        return (
+          <p key={bi}>
+            {lines.flatMap((l, li) => [
+              ...renderInline(l),
+              li < lines.length - 1 ? <br key={`br${li}`} /> : null,
+            ]).filter(Boolean)}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+import { formatTimestamp, cn } from "@/lib/utils"
 import { ParseCard } from "./ParseCard"
 import { LexiconCard } from "./LexiconCard"
 import { ScansionCard } from "./ScansionCard"
 import { ImageMessage } from "./ImageMessage"
 import { StreamingIndicator } from "./StreamingIndicator"
-import { cn } from "@/lib/utils"
 
 interface MessageBubbleProps {
   message: TranscriptMessage
@@ -74,8 +160,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {message.content && message.content !== "[Image sent]" && (
           <div
             className={cn(
-              "rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap transcript-prose",
-              isUser && "rounded-tr-sm",
+              "rounded-xl px-4 py-3 text-sm leading-relaxed transcript-prose",
+              // User messages: plain pre-wrap text; assistant: parsed markdown
+              isUser && "whitespace-pre-wrap rounded-tr-sm",
               !isUser && "rounded-tl-sm",
               message.isStreaming && !isUser && "streaming-cursor"
             )}
@@ -85,7 +172,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               border: isUser ? "none" : "1px solid var(--border)",
             }}
           >
-            {message.content}
+            {isUser ? message.content : <MarkdownText text={message.content} />}
           </div>
         )}
 

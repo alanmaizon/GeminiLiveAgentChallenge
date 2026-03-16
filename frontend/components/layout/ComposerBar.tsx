@@ -6,6 +6,7 @@ import {
   MicOff,
   Camera,
   CameraOff,
+  Circle,
   Square,
   Play,
   Send,
@@ -92,50 +93,71 @@ export function ComposerBar({
       <div className="flex items-end gap-2 px-3 py-2 max-w-3xl mx-auto">
         {/* Media controls */}
         <div className="flex items-center gap-1 pb-1">
+          {/*
+           * Mic button — state semantics:
+           *   off (default)   → MicOff icon, muted grey styling
+           *   on (capturing)  → Mic icon,    accent/active styling
+           *   error/denied    → MicOff icon, error/red styling (distinct from "on")
+           */}
           <button
             onClick={onToggleMic}
             disabled={!canInteract}
             className={cn(
               "p-2 rounded-lg transition-colors",
-              isAudioCapturing
+              audioError
                 ? "text-[var(--error)] bg-[var(--error-surface)]"
-                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]",
+                : isAudioCapturing
+                  ? "text-[var(--accent)] bg-[var(--surface-hover)]"
+                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]",
               !canInteract && "opacity-40 cursor-not-allowed"
             )}
             title={isAudioCapturing ? "Stop mic" : "Start mic"}
           >
-            {isAudioCapturing ? <MicOff size={18} /> : <Mic size={18} />}
+            {isAudioCapturing ? <Mic size={18} /> : <MicOff size={18} />}
           </button>
 
+          {/*
+           * Camera toggle — state semantics:
+           *   off (default)   → CameraOff icon, muted grey styling
+           *   on (active)     → Camera icon,    accent/active styling
+           *   error/denied    → CameraOff icon, error/red styling
+           */}
           <button
-            onClick={() => {
-              if (isCameraActive) {
-                onCaptureAndSendImage()
-              } else {
-                onToggleCamera()
-              }
-            }}
+            onClick={() => onToggleCamera()}
             disabled={!canInteract}
             className={cn(
               "p-2 rounded-lg transition-colors",
-              isCameraActive
-                ? "text-[var(--accent)]"
-                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]",
+              cameraError
+                ? "text-[var(--error)] bg-[var(--error-surface)]"
+                : isCameraActive
+                  ? "text-[var(--accent)] bg-[var(--surface-hover)]"
+                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]",
               !canInteract && "opacity-40 cursor-not-allowed"
             )}
-            title={isCameraActive ? "Capture & send frame" : "Start camera"}
+            title={isCameraActive ? "Stop camera" : "Start camera"}
           >
             {isCameraActive ? <Camera size={18} /> : <CameraOff size={18} />}
           </button>
 
-          {canInteract && (
+          {/* When camera is on: shutter button replaces interrupt */}
+          {canInteract && isCameraActive ? (
             <button
-              onClick={onInterrupt}
-              className="p-2 rounded-lg text-[var(--text-secondary)] hover:text-[var(--error)] hover:bg-[var(--error-surface)] transition-colors"
-              title="Interrupt"
+              onClick={onCaptureAndSendImage}
+              className="p-2 rounded-lg text-[var(--accent)] hover:opacity-80 transition-opacity"
+              title="Take photo"
             >
-              <Zap size={18} />
+              <Circle size={18} />
             </button>
+          ) : (
+            canInteract && (
+              <button
+                onClick={onInterrupt}
+                className="p-2 rounded-lg text-[var(--text-secondary)] hover:text-[var(--error)] hover:bg-[var(--error-surface)] transition-colors"
+                title="Interrupt"
+              >
+                <Zap size={18} />
+              </button>
+            )
           )}
         </div>
 

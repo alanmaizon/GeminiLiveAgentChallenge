@@ -284,12 +284,67 @@ async function sendPrompt(page, prompt, expectedRegex = null, timeout = 28_000) 
 
 /**
  * Inject an image via the hidden <input type="file"> in page.tsx.
+ * Includes diagnostics: image file validation, page screenshots, bounding box.
  */
 async function uploadImage(page, filePath) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   console.log(`     → upload: ${path.basename(filePath)}`);
+
+  // ── DIAGNOSTIC 1: validate the source image file ─────────────────────────
+  const imgBuf  = fs.readFileSync(filePath);
+  const imgSize = imgBuf.length;
+  // JPEG magic bytes: FF D8 FF
+  const isJpeg  = imgBuf[0] === 0xFF && imgBuf[1] === 0xD8 && imgBuf[2] === 0xFF;
+  // PNG magic bytes: 89 50 4E 47
+  const isPng   = imgBuf[0] === 0x89 && imgBuf[1] === 0x50;
+  const firstHex = imgBuf.slice(0, 8).toString("hex").toUpperCase().replace(/../g, "$& ").trim();
+  console.log(`       size:        ${imgSize} bytes`);
+  console.log(`       first bytes: ${firstHex}`);
+  console.log(`       format:      ${isJpeg ? "JPEG ✓" : isPng ? "PNG ✓" : "UNKNOWN — model may reject"}`);
+  if (imgSize < 512) {
+    console.warn("       [warn] image is suspiciously small — may be empty or corrupt");
+  }
+
+  // Save a timestamped copy of the image being sent so we can verify it locally
+  const diagImagePath = path.join(VIDEO_DIR, `diag-upload-${stamp}${isJpeg ? ".jpg" : ".png"}`);
+  fs.copyFileSync(filePath, diagImagePath);
+  console.log(`       saved diagnostic copy → ${diagImagePath}`);
+
+  // ── DIAGNOSTIC 2: full-viewport screenshot BEFORE upload ─────────────────
+  const beforePath = path.join(VIDEO_DIR, `diag-before-upload-${stamp}.png`);
+  await page.screenshot({ path: beforePath, fullPage: false });
+  console.log(`       viewport screenshot (before) → ${beforePath}`);
+
+  // Full-page screenshot (captures content below the fold too)
+  const beforeFullPath = path.join(VIDEO_DIR, `diag-before-upload-fullpage-${stamp}.png`);
+  await page.screenshot({ path: beforeFullPath, fullPage: true });
+  console.log(`       full-page screenshot (before) → ${beforeFullPath}`);
+
+  // ── DIAGNOSTIC 3: log page URL and DOM readiness ──────────────────────────
+  console.log(`       page URL:    ${page.url()}`);
+  const domReady = await page.evaluate(() => document.readyState).catch(() => "unknown");
+  console.log(`       readyState:  ${domReady}`);
+
+  // ── DIAGNOSTIC 4: locate file input and log bounding box ─────────────────
   const input = await firstExisting(page, SEL.fileInput, 5_000);
+  const box = await input.boundingBox().catch(() => null);
+  console.log(`       file input bounding box:`, box ?? "(off-screen — expected for hidden input)");
+  const inputVisible = await input.isVisible().catch(() => false);
+  console.log(`       file input visible: ${inputVisible} (should be false — intentionally hidden)`);
+
   await input.setInputFiles(filePath);
   console.log("       injected via data-testid=image-upload-input");
+
+  // ── DIAGNOSTIC 5: full-viewport screenshot AFTER upload ──────────────────
+  await page.waitForTimeout(500); // brief pause so React state updates
+  const afterPath = path.join(VIDEO_DIR, `diag-after-upload-${stamp}.png`);
+  await page.screenshot({ path: afterPath, fullPage: false });
+  console.log(`       viewport screenshot (after)  → ${afterPath}`);
+
+  // Check that an <img> thumbnail appeared (means FileReader completed)
+  const imgEl = page.locator('img[alt="Sent image"]').first();
+  const thumbVisible = await imgEl.isVisible().catch(() => false);
+  console.log(`       image thumbnail in transcript: ${thumbVisible ? "✓ visible" : "✗ NOT visible yet"}`);
 }
 
 /**
