@@ -12,8 +12,8 @@ WS_URL="${BACKEND_URL/https:\/\//wss://}/ws"
 
 echo "Building and pushing image: $IMAGE"
 gcloud builds submit \
-  --tag "$IMAGE" \
-  --build-arg "NEXT_PUBLIC_WS_URL=$WS_URL" \
+  --config frontend/cloudbuild.yaml \
+  --substitutions "_IMAGE=$IMAGE,_WS_URL=$WS_URL" \
   ./frontend
 
 echo "Deploying to Cloud Run: $SERVICE_NAME"
